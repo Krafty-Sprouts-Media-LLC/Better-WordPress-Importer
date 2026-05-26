@@ -40,6 +40,15 @@ class WXR_Import_UI {
 	protected $authors = array();
 
 	/**
+	 * Whether the current import file was registered via handle_local_file().
+	 * Local-path files are NOT deleted after import — the user placed them there.
+	 * Browser-uploaded files ARE deleted after import — they're temporary.
+	 *
+	 * @var bool
+	 */
+	protected $is_local_file = false;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
@@ -48,6 +57,8 @@ class WXR_Import_UI {
 		add_action( 'wp_ajax_nopriv_wxr-import-upload', array( $this, 'handle_async_upload' ) );
 		add_action( 'wp_ajax_wxr-cancel-import', array( $this, 'handle_cancel_import' ) );
 		add_filter( 'upload_mimes', array( $this, 'add_mime_type_xml' ) );
+		// Prevent WordPress from renaming .xml files to .xml.txt during upload
+		add_filter( 'wp_check_filetype_and_ext', array( $this, 'fix_xml_filetype' ), 10, 5 );
 	}
 
 	/**
@@ -56,9 +67,32 @@ class WXR_Import_UI {
 	 * @param array $mimes Already supported mime types.
 	 */
 	public function add_mime_type_xml( $mimes ) {
-		$mimes = array_merge( $mimes, array( 'xml' => 'application/xml' ) );
-
+		$mimes['xml'] = 'application/xml';
+		$mimes['xml|xsl'] = 'text/xml';
 		return $mimes;
+	}
+
+	/**
+	 * Fix WordPress incorrectly flagging .xml files as unsafe and renaming them to .txt.
+	 * WordPress's MIME sniffing can misidentify XML files — this corrects it for our uploader.
+	 *
+	 * @param array       $data     Values for the extension, mime type, and corrected filename.
+	 * @param string      $file     Full path to the file.
+	 * @param string      $filename The name of the file.
+	 * @param array|null  $mimes    Array of mime types keyed by their file extension regex.
+	 * @param string|bool $real_mime The actual mime type or false if the type cannot be determined.
+	 * @return array
+	 */
+	public function fix_xml_filetype( $data, $file, $filename, $mimes, $real_mime = false ) {
+		if ( empty( $data['ext'] ) && empty( $data['type'] ) ) {
+			$ext = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+			if ( $ext === 'xml' ) {
+				$data['ext']             = 'xml';
+				$data['type']            = 'application/xml';
+				$data['proper_filename'] = $filename;
+			}
+		}
+		return $data;
 	}
 
 	/**
@@ -377,8 +411,11 @@ class WXR_Import_UI {
 
 		// Store the actual file path as attached file meta so get_attached_file() works
 		update_attached_file( $id, $real );
+		// Flag this as a local file so stream_import knows not to delete it after import
+		update_post_meta( $id, '_wxr_is_local_file', '1' );
 
-		$this->id = $id;
+		$this->id            = $id;
+		$this->is_local_file = true; // don't delete after import — user placed it there
 		return true;
 	}
 
@@ -589,6 +626,18 @@ class WXR_Import_UI {
 		}
 
 		$file = get_attached_file( $id );
+
+		// WordPress sometimes renames .xml to .xml.txt during upload due to MIME sniffing.
+		// If the stored path doesn't exist, try stripping the .txt suffix.
+		if ( ( ! $file || ! file_exists( $file ) ) && $file ) {
+			$candidate = preg_replace( '/\.txt$/i', '', $file );
+			if ( $candidate !== $file && file_exists( $candidate ) ) {
+				// Fix the stored path so future calls work correctly
+				update_attached_file( $id, $candidate );
+				$file = $candidate;
+			}
+		}
+
 		if ( ! $file || ! file_exists( $file ) ) {
 			return new WP_Error(
 				'wxr_importer.upload.file_not_found',
@@ -681,7 +730,11 @@ class WXR_Import_UI {
 		$fetch_attachments = ( ! empty( $args['fetch_attachments'] ) && $this->allow_fetch_attachments() );
 
 		// Set our settings
-		$settings = compact( 'mapping', 'fetch_attachments' );
+		$settings = array(
+			'mapping'       => $mapping,
+			'fetch_attachments' => $fetch_attachments,
+			'is_local_file' => (bool) get_post_meta( $this->id, '_wxr_is_local_file', true ),
+		);
 		update_post_meta( $this->id, '_wxr_import_settings', $settings );
 
 		// Time to run the import!
@@ -791,6 +844,16 @@ class WXR_Import_UI {
 		flush();
 
 		$file = get_attached_file( $this->id );
+
+		// Handle WordPress renaming .xml to .xml.txt during upload
+		if ( ( ! $file || ! file_exists( $file ) ) && $file ) {
+			$candidate = preg_replace( '/\.txt$/i', '', $file );
+			if ( $candidate !== $file && file_exists( $candidate ) ) {
+				update_attached_file( $this->id, $candidate );
+				$file = $candidate;
+			}
+		}
+
 		if ( ! $file || ! file_exists( $file ) ) {
 			$this->emit_sse_message( array(
 				'action' => 'error',
@@ -810,10 +873,26 @@ class WXR_Import_UI {
 		// Remove the settings to stop future reconnects.
 		delete_post_meta( $this->id, '_wxr_import_settings' );
 
+		// Clean up the import file and its attachment record.
+		// — Browser-uploaded files: always delete (they're temporary, and leaving a
+		//   WXR file publicly accessible in uploads is a security risk).
+		// — Local-path files (is_local_file = true): leave the file on disk but still
+		//   remove the temporary attachment record we created.
+		if ( ! $this->is_local_file ) {
+			// Delete the physical file
+			$upload_file = get_attached_file( $this->id );
+			if ( $upload_file && file_exists( $upload_file ) ) {
+				wp_delete_attachment( $this->id, true ); // true = delete file from disk too
+			}
+		} else {
+			// Just remove the temporary attachment record, leave the file intact
+			wp_delete_post( $this->id, true );
+		}
+
 		// Let the browser know we're done.
 		$complete = array(
 			'action' => 'complete',
-			'error' => false,
+			'error'  => false,
 		);
 		if ( is_wp_error( $err ) ) {
 			$complete['error'] = $err->get_error_message();

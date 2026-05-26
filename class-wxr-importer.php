@@ -124,25 +124,25 @@ class WXR_Importer extends WP_Importer {
 	protected function safe_expand( $reader, $node_type = 'XML' ) {
 		// Clear any previous XML errors
 		libxml_clear_errors();
-		
-		$node = $reader->expand();
-		
+
+		// Suppress the PHP warning that XMLReader::expand() emits on malformed nodes —
+		// we handle the false return value ourselves below.
+		$node = @$reader->expand();
+
 		if ( false === $node ) {
-			// Get XML errors for logging
 			$xml_errors = libxml_get_errors();
 			libxml_clear_errors();
-			
-			if ( $this->logger && ! empty( $xml_errors ) ) {
+
+			if ( $this->logger ) {
 				$error_msg = sprintf( __( 'Skipping malformed %s node. The export file may be corrupted.', 'wordpress-importer' ), $node_type );
 				$first_error = reset( $xml_errors );
 				if ( $first_error && isset( $first_error->message ) ) {
-					// Only log the error message, not the full details to avoid cluttering
 					$error_msg .= ' ' . sprintf( __( 'Line %d: %s', 'wordpress-importer' ), $first_error->line, trim( $first_error->message ) );
 				}
 				$this->logger->warning( $error_msg );
 			}
 		}
-		
+
 		return $node;
 	}
 
