@@ -238,6 +238,7 @@ class WXR_Import_UI {
 		// Get plugin file path and use plugins_url() - the WordPress way
 		// class-wxr-import-ui.php is in the plugin root, so dirname(__FILE__) gives us the plugin directory
 		$plugin_file = dirname( __FILE__ ) . '/plugin.php';
+		$script_path = dirname( __FILE__ ) . '/assets/intro.js';
 		$url = plugins_url( 'assets/intro.js', $plugin_file );
 		$deps = array(
 			'jquery',
@@ -247,7 +248,7 @@ class WXR_Import_UI {
 			'wp-plupload',
 			'media-upload',
 		);
-		wp_enqueue_script( 'import-upload', $url, $deps, false, true );
+		wp_enqueue_script( 'import-upload', $url, $deps, filemtime( $script_path ), true );
 
 		// Set uploader settings
 		wp_plupload_default_settings();
@@ -257,6 +258,11 @@ class WXR_Import_UI {
 				'buttonText' => esc_html__( 'Import', 'wordpress-importer' ),
 			),
 			'next_url' => wp_nonce_url( $this->get_url( 1 ), 'import-upload' ) . '&id={id}',
+			'params'   => array(
+				'action'   => 'wxr-import-upload',
+				'_wpnonce' => wp_create_nonce( 'wxr-import-upload' ),
+				'upload_session' => wp_generate_uuid4(),
+			),
 			'plupload' => array(
 				'filters' => array(
 					'max_file_size' => $max_upload_size . 'b',
@@ -269,13 +275,21 @@ class WXR_Import_UI {
 				),
 				'url' => admin_url( 'admin-ajax.php' ),
 				'file_data_name' => 'import',
-				'multipart_params' => array(
-					'action'   => 'wxr-import-upload',
-					'_wpnonce' => wp_create_nonce( 'wxr-import-upload' ),
-				),
+				'chunk_size' => '8mb',
 			),
 		);
 		wp_localize_script( 'import-upload', 'importUploadSettings', $settings );
+		$this->log_upload_debug(
+			'render_upload_form',
+			array(
+				'ajax_url'       => admin_url( 'admin-ajax.php' ),
+				'upload_action'  => $settings['params']['action'],
+				'file_data_name' => $settings['plupload']['file_data_name'],
+				'max_file_size'  => $settings['plupload']['filters']['max_file_size'],
+				'chunk_size'     => $settings['plupload']['chunk_size'],
+				'script_version' => filemtime( $script_path ),
+			)
+		);
 
 		// Use WXR_IMPORTER_URL constant for consistent asset loading
 		wp_enqueue_style( 'wxr-import-upload', WXR_IMPORTER_URL . 'assets/intro.css', array(), '2.0.1' );
@@ -461,20 +475,55 @@ class WXR_Import_UI {
 	 * Plupload requests from the importer.
 	 */
 	public function handle_async_upload() {
-		header( 'Content-Type: text/html; charset=' . get_option( 'blog_charset' ) );
-		send_nosniff_header();
-		nocache_headers();
+		$this->log_upload_debug(
+			'async_entry',
+			array(
+				'method'         => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
+				'content_length' => isset( $_SERVER['CONTENT_LENGTH'] ) ? (int) $_SERVER['CONTENT_LENGTH'] : 0,
+				'action'         => isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : '',
+				'request_keys'   => array_keys( $_REQUEST ),
+				'file_keys'      => array_keys( $_FILES ),
+				'files'          => $this->summarize_upload_files(),
+				'user_id'        => get_current_user_id(),
+				'can_upload'     => current_user_can( 'upload_files' ),
+			)
+		);
+
+		register_shutdown_function(
+			function () {
+				$error = error_get_last();
+				if ( ! empty( $error ) ) {
+					$this->log_upload_debug( 'async_shutdown_error', $error );
+				}
+			}
+		);
+
+		$this->discard_async_upload_output();
+
+		if ( ! headers_sent() ) {
+			header( 'Content-Type: text/html; charset=' . get_option( 'blog_charset' ) );
+			send_nosniff_header();
+			nocache_headers();
+		}
+
+		ob_start();
 
 		// Verify nonce
 		if ( ! isset( $_REQUEST['_wpnonce'] ) || ! wp_verify_nonce( $_REQUEST['_wpnonce'], 'wxr-import-upload' ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug(
+				'nonce_failed',
+				array(
+					'has_nonce' => isset( $_REQUEST['_wpnonce'] ),
+					'action'    => isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : '',
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'Security check failed. Please refresh the page and try again.', 'wordpress-importer' ),
 					'filename' => isset( $_FILES['import']['name'] ) ? sanitize_file_name( $_FILES['import']['name'] ) : '',
-				),
-			) );
-			exit;
+				)
+			);
 		}
 
 		/*
@@ -485,29 +534,35 @@ class WXR_Import_UI {
 
 		// Check if file was uploaded
 		if ( ! isset( $_FILES['import'] ) || ! isset( $_FILES['import']['name'] ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug( 'missing_import_file', array( 'files' => $this->summarize_upload_files() ) );
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'No file was uploaded.', 'wordpress-importer' ),
 					'filename' => '',
-				),
-			) );
-			exit;
+				)
+			);
 		}
 
 		$filename = wp_unslash( $_FILES['import']['name'] );
+		if ( $this->is_chunked_upload() && isset( $_REQUEST['name'] ) ) {
+			$filename = wp_unslash( $_REQUEST['name'] );
+		}
 		$filename = sanitize_file_name( $filename );
 
 		if ( ! current_user_can( 'upload_files' ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug( 'permission_failed', array( 'filename' => $filename ) );
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'You do not have permission to upload files.', 'wordpress-importer' ),
 					'filename' => $filename,
-				),
-			) );
+				)
+			);
+		}
 
-			exit;
+		if ( $this->is_chunked_upload() ) {
+			$this->handle_async_chunked_upload( $filename );
 		}
 
 		// Ensure wp_import_handle_upload function exists
@@ -516,58 +571,479 @@ class WXR_Import_UI {
 		}
 
 		if ( ! function_exists( 'wp_import_handle_upload' ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug( 'missing_wp_import_handle_upload', array( 'filename' => $filename ) );
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'WordPress import functions are not available.', 'wordpress-importer' ),
 					'filename' => $filename,
-				),
-			) );
-			exit;
+				)
+			);
 		}
 
 		$file = wp_import_handle_upload();
 		if ( is_wp_error( $file ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug(
+				'wp_error',
+				array(
+					'filename' => $filename,
+					'code'     => $file->get_error_code(),
+					'message'  => $file->get_error_message(),
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => $file->get_error_message(),
 					'filename' => $filename,
-				),
-			) );
+				)
+			);
+		}
 
-			exit;
+		if ( isset( $file['error'] ) ) {
+			$this->log_upload_debug(
+				'upload_array_error',
+				array(
+					'filename' => $filename,
+					'error'    => $file['error'],
+					'file'     => $file,
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => $file['error'],
+					'filename' => $filename,
+				)
+			);
 		}
 
 		if ( ! isset( $file['id'] ) || ! isset( $file['file'] ) ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug(
+				'invalid_upload_result',
+				array(
+					'filename' => $filename,
+					'file'     => $file,
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'Upload failed: Invalid file data returned.', 'wordpress-importer' ),
 					'filename' => $filename,
-				),
-			) );
-			exit;
+				)
+			);
 		}
 
 		$attachment = wp_prepare_attachment_for_js( $file['id'] );
 		if ( ! $attachment ) {
-			echo wp_json_encode( array(
-				'success' => false,
-				'data'    => array(
+			$this->log_upload_debug(
+				'prepare_attachment_failed',
+				array(
+					'filename'      => $filename,
+					'attachment_id' => $file['id'],
+					'file'          => $file,
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
 					'message'  => __( 'Upload failed: Could not prepare attachment data.', 'wordpress-importer' ),
 					'filename' => $filename,
-				),
-			) );
-			exit;
+				)
+			);
 		}
 
-		echo wp_json_encode( array(
-			'success' => true,
-			'data'    => $attachment,
-		) );
+		$this->log_upload_debug(
+			'async_success',
+			array(
+				'filename'      => $filename,
+				'attachment_id' => $attachment['id'],
+				'uploaded_file' => $file['file'],
+			)
+		);
+		$this->send_async_upload_response( true, $attachment );
+	}
+
+	/**
+	 * Check whether the current upload is a Plupload chunk.
+	 *
+	 * @return bool
+	 */
+	protected function is_chunked_upload() {
+		return isset( $_REQUEST['chunks'], $_REQUEST['chunk'] ) && (int) $_REQUEST['chunks'] > 1;
+	}
+
+	/**
+	 * Handle a chunked browser upload and register the assembled XML file.
+	 *
+	 * @param string $filename Sanitized original filename.
+	 */
+	protected function handle_async_chunked_upload( $filename ) {
+		$chunk  = isset( $_REQUEST['chunk'] ) ? (int) $_REQUEST['chunk'] : 0;
+		$chunks = isset( $_REQUEST['chunks'] ) ? (int) $_REQUEST['chunks'] : 0;
+
+		if ( $chunk < 0 || $chunks < 2 || $chunk >= $chunks ) {
+			$this->log_upload_debug(
+				'chunk_invalid_index',
+				array(
+					'filename' => $filename,
+					'chunk'    => $chunk,
+					'chunks'   => $chunks,
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Invalid upload chunk received.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$ext = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+		if ( 'xml' !== $ext ) {
+			$this->log_upload_debug( 'chunk_invalid_extension', array( 'filename' => $filename ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Invalid file type. Please upload a valid WordPress XML export file.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$upload_session = isset( $_REQUEST['upload_session'] ) ? sanitize_key( wp_unslash( $_REQUEST['upload_session'] ) ) : '';
+		if ( empty( $upload_session ) ) {
+			$upload_session = md5( get_current_user_id() . '|' . $filename . '|' . $chunks );
+		}
+
+		$upload_dir = wp_upload_dir();
+		if ( ! empty( $upload_dir['error'] ) ) {
+			$this->log_upload_debug( 'chunk_upload_dir_error', array( 'error' => $upload_dir['error'] ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => $upload_dir['error'],
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$chunk_base = trailingslashit( $upload_dir['basedir'] ) . 'wxr-importer-chunks';
+		if ( ! wp_mkdir_p( $chunk_base ) ) {
+			$this->log_upload_debug( 'chunk_base_dir_failed', array( 'chunk_base' => $chunk_base ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Could not create a temporary upload directory.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		if ( ! file_exists( trailingslashit( $chunk_base ) . 'index.php' ) ) {
+			@file_put_contents( trailingslashit( $chunk_base ) . 'index.php', "<?php\n// Silence is golden.\n" );
+		}
+
+		if ( ! file_exists( trailingslashit( $chunk_base ) . '.htaccess' ) ) {
+			@file_put_contents( trailingslashit( $chunk_base ) . '.htaccess', "Deny from all\n" );
+		}
+
+		$chunk_dir = trailingslashit( $chunk_base ) . $upload_session;
+		if ( ! wp_mkdir_p( $chunk_dir ) ) {
+			$this->log_upload_debug( 'chunk_dir_failed', array( 'chunk_dir' => $chunk_dir ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Could not create a temporary upload directory.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$chunk_file = trailingslashit( $chunk_dir ) . $chunk . '.part';
+		if ( ! isset( $_FILES['import']['tmp_name'] ) || ! is_uploaded_file( $_FILES['import']['tmp_name'] ) ) {
+			$this->log_upload_debug( 'chunk_missing_tmp_file', array( 'files' => $this->summarize_upload_files() ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Upload chunk was missing from the request.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		if ( ! move_uploaded_file( $_FILES['import']['tmp_name'], $chunk_file ) ) {
+			$this->log_upload_debug(
+				'chunk_move_failed',
+				array(
+					'chunk_file' => $chunk_file,
+					'files'      => $this->summarize_upload_files(),
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Could not save upload chunk.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$this->log_upload_debug(
+			'chunk_saved',
+			array(
+				'filename' => $filename,
+				'chunk'    => $chunk,
+				'chunks'   => $chunks,
+				'size'     => filesize( $chunk_file ),
+			)
+		);
+
+		if ( $chunk + 1 < $chunks ) {
+			$this->send_async_upload_response(
+				true,
+				array(
+					'message'  => __( 'Upload chunk received.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		for ( $i = 0; $i < $chunks; $i++ ) {
+			if ( ! file_exists( trailingslashit( $chunk_dir ) . $i . '.part' ) ) {
+				$this->log_upload_debug(
+					'chunk_waiting_for_parts',
+					array(
+						'filename' => $filename,
+						'missing'  => $i,
+						'chunks'   => $chunks,
+					)
+				);
+				$this->send_async_upload_response(
+					true,
+					array(
+						'message'  => __( 'Upload chunk received.', 'wordpress-importer' ),
+						'filename' => $filename,
+					)
+				);
+			}
+		}
+
+		$unique_filename = wp_unique_filename( $upload_dir['path'], $filename );
+		$final_file      = trailingslashit( $upload_dir['path'] ) . $unique_filename;
+		$out             = fopen( $final_file, 'wb' );
+
+		if ( false === $out ) {
+			$this->log_upload_debug( 'chunk_final_open_failed', array( 'final_file' => $final_file ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Could not assemble uploaded file.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		for ( $i = 0; $i < $chunks; $i++ ) {
+			$part = trailingslashit( $chunk_dir ) . $i . '.part';
+			$in   = fopen( $part, 'rb' );
+
+			if ( false === $in ) {
+				fclose( $out );
+				$this->log_upload_debug( 'chunk_part_open_failed', array( 'part' => $part ) );
+				$this->send_async_upload_response(
+					false,
+					array(
+						'message'  => __( 'Could not read upload chunk.', 'wordpress-importer' ),
+						'filename' => $filename,
+					)
+				);
+			}
+
+			stream_copy_to_stream( $in, $out );
+			fclose( $in );
+		}
+
+		fclose( $out );
+
+		for ( $i = 0; $i < $chunks; $i++ ) {
+			@unlink( trailingslashit( $chunk_dir ) . $i . '.part' );
+		}
+		@rmdir( $chunk_dir );
+
+		$head = file_get_contents( $final_file, false, null, 0, 500 );
+		if ( false === $head || ( ! preg_match( '/<\?xml/i', $head ) && ! preg_match( '/<rss|<wxr/i', $head ) ) ) {
+			@unlink( $final_file );
+			$this->log_upload_debug( 'chunk_final_invalid_xml', array( 'filename' => $filename ) );
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Invalid file type. Please upload a valid WordPress XML export file.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$attachment = array(
+			'post_title'     => wp_basename( $unique_filename ),
+			'post_content'   => trailingslashit( $upload_dir['url'] ) . $unique_filename,
+			'post_mime_type' => 'application/xml',
+			'guid'           => trailingslashit( $upload_dir['url'] ) . $unique_filename,
+			'context'        => 'import',
+			'post_status'    => 'private',
+		);
+
+		$id = wp_insert_attachment( $attachment, $final_file );
+		if ( is_wp_error( $id ) ) {
+			@unlink( $final_file );
+			$this->log_upload_debug(
+				'chunk_insert_attachment_error',
+				array(
+					'filename' => $filename,
+					'code'     => $id->get_error_code(),
+					'message'  => $id->get_error_message(),
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => $id->get_error_message(),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		update_attached_file( $id, $final_file );
+		wp_schedule_single_event( time() + DAY_IN_SECONDS, 'importer_scheduled_cleanup', array( $id ) );
+
+		$attachment_data = wp_prepare_attachment_for_js( $id );
+		if ( ! $attachment_data ) {
+			$this->log_upload_debug(
+				'chunk_prepare_attachment_failed',
+				array(
+					'filename'      => $filename,
+					'attachment_id' => $id,
+				)
+			);
+			$this->send_async_upload_response(
+				false,
+				array(
+					'message'  => __( 'Upload failed: Could not prepare attachment data.', 'wordpress-importer' ),
+					'filename' => $filename,
+				)
+			);
+		}
+
+		$this->log_upload_debug(
+			'chunk_upload_success',
+			array(
+				'filename'      => $filename,
+				'attachment_id' => $id,
+				'final_file'    => $final_file,
+			)
+		);
+
+		$this->send_async_upload_response( true, $attachment_data );
+	}
+
+	/**
+	 * Send a Plupload-compatible JSON response.
+	 *
+	 * @param bool  $success Whether the upload succeeded.
+	 * @param array $data    Response payload.
+	 */
+	protected function send_async_upload_response( $success, array $data ) {
+		$this->log_upload_debug(
+			'async_response',
+			array(
+				'success' => (bool) $success,
+				'data'    => $this->summarize_upload_response_data( $data ),
+			)
+		);
+		$this->discard_async_upload_output();
+
+		echo wp_json_encode(
+			array(
+				'success' => (bool) $success,
+				'data'    => $data,
+			)
+		);
 
 		exit;
+	}
+
+	/**
+	 * Discard output that would corrupt the Plupload JSON response.
+	 */
+	protected function discard_async_upload_output() {
+		while ( ob_get_level() ) {
+			$buffer = ob_get_status();
+			if ( empty( $buffer['del'] ) ) {
+				break;
+			}
+
+			ob_end_clean();
+		}
+	}
+
+	/**
+	 * Write importer upload diagnostics outside WP_DEBUG_LOG.
+	 *
+	 * @param string $event   Event name.
+	 * @param array  $context Debug context.
+	 */
+	protected function log_upload_debug( $event, array $context = array() ) {
+		$entry = array(
+			'time'    => gmdate( 'c' ),
+			'event'   => $event,
+			'context' => $context,
+		);
+
+		@file_put_contents(
+			__DIR__ . '/wxr-upload-debug.log',
+			wp_json_encode( $entry, JSON_UNESCAPED_SLASHES ) . PHP_EOL,
+			FILE_APPEND | LOCK_EX
+		);
+	}
+
+	/**
+	 * Summarize $_FILES without dumping full temp-file contents.
+	 *
+	 * @return array
+	 */
+	protected function summarize_upload_files() {
+		$files = array();
+
+		foreach ( $_FILES as $key => $file ) {
+			$files[ $key ] = array(
+				'name'     => isset( $file['name'] ) ? sanitize_file_name( wp_unslash( $file['name'] ) ) : '',
+				'type'     => isset( $file['type'] ) ? sanitize_text_field( wp_unslash( $file['type'] ) ) : '',
+				'size'     => isset( $file['size'] ) ? (int) $file['size'] : 0,
+				'error'    => isset( $file['error'] ) ? (int) $file['error'] : 0,
+				'tmp_name' => isset( $file['tmp_name'] ) ? (string) $file['tmp_name'] : '',
+			);
+		}
+
+		return $files;
+	}
+
+	/**
+	 * Keep response log entries readable.
+	 *
+	 * @param array $data Response data.
+	 * @return array
+	 */
+	protected function summarize_upload_response_data( array $data ) {
+		return array(
+			'id'       => isset( $data['id'] ) ? $data['id'] : null,
+			'filename' => isset( $data['filename'] ) ? $data['filename'] : null,
+			'message'  => isset( $data['message'] ) ? $data['message'] : null,
+			'type'     => isset( $data['type'] ) ? $data['type'] : null,
+			'subtype'  => isset( $data['subtype'] ) ? $data['subtype'] : null,
+			'url'      => isset( $data['url'] ) ? $data['url'] : null,
+		);
 	}
 
 	/**
@@ -755,6 +1231,37 @@ class WXR_Import_UI {
 	 * and updates.
 	 */
 	public function stream_import() {
+		$stream_complete_emitted = false;
+		$stream_import_started   = false;
+
+		$this->log_upload_debug(
+			'stream_entry',
+			array(
+				'method'       => isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '',
+				'action'       => isset( $_REQUEST['action'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['action'] ) ) : '',
+				'id'           => isset( $_REQUEST['id'] ) ? (int) $_REQUEST['id'] : 0,
+				'user_id'      => get_current_user_id(),
+				'can_import'   => current_user_can( 'import' ),
+				'request_keys' => array_keys( $_REQUEST ),
+			)
+		);
+
+		register_shutdown_function(
+			function () use ( &$stream_complete_emitted, &$stream_import_started ) {
+				$this->log_upload_debug(
+					'stream_shutdown',
+					array(
+						'id'                 => $this->id,
+						'import_started'     => $stream_import_started,
+						'complete_emitted'   => $stream_complete_emitted,
+						'connection_status'  => connection_status(),
+						'connection_aborted' => connection_aborted(),
+						'last_error'         => error_get_last(),
+					)
+				);
+			}
+		);
+
 		// Turn off PHP output compression
 		$previous = error_reporting( error_reporting() ^ E_WARNING );
 		ini_set( 'output_buffering', 'off' );
@@ -778,6 +1285,12 @@ class WXR_Import_UI {
 		$this->id = (int) wp_unslash( $_REQUEST['id'] );
 		$settings = get_post_meta( $this->id, '_wxr_import_settings', true );
 		if ( empty( $settings ) ) {
+			$this->log_upload_debug(
+				'stream_missing_settings',
+				array(
+					'id' => $this->id,
+				)
+			);
 			// Tell the browser to stop reconnecting.
 			status_header( 204 );
 			exit;
@@ -785,6 +1298,7 @@ class WXR_Import_UI {
 
 		// Verify the user has permission to run this import
 		if ( ! current_user_can( 'import' ) ) {
+			$this->log_upload_debug( 'stream_permission_failed', array( 'id' => $this->id ) );
 			$this->emit_sse_message( array(
 				'action' => 'error',
 				'error'  => __( 'You do not have permission to import content.', 'wordpress-importer' ),
@@ -810,6 +1324,18 @@ class WXR_Import_UI {
 
 		$mapping = $settings['mapping'];
 		$this->fetch_attachments = (bool) $settings['fetch_attachments'];
+		$this->is_local_file     = ! empty( $settings['is_local_file'] );
+
+		$this->log_upload_debug(
+			'stream_settings_loaded',
+			array(
+				'id'                => $this->id,
+				'fetch_attachments' => $this->fetch_attachments,
+				'is_local_file'     => $this->is_local_file,
+				'mapping_count'     => isset( $mapping['mapping'] ) ? count( $mapping['mapping'] ) : 0,
+				'slug_overrides'    => isset( $mapping['slug_overrides'] ) ? count( $mapping['slug_overrides'] ) : 0,
+			)
+		);
 
 		$importer = $this->get_importer();
 		if ( ! empty( $mapping['mapping'] ) ) {
@@ -855,6 +1381,13 @@ class WXR_Import_UI {
 		}
 
 		if ( ! $file || ! file_exists( $file ) ) {
+			$this->log_upload_debug(
+				'stream_file_missing',
+				array(
+					'id'   => $this->id,
+					'file' => $file,
+				)
+			);
 			$this->emit_sse_message( array(
 				'action' => 'error',
 				'error' => __( 'Import file not found.', 'wordpress-importer' ),
@@ -868,10 +1401,29 @@ class WXR_Import_UI {
 			'message' => __( 'Beginning import...', 'wordpress-importer' ),
 		) );
 
+		$this->log_upload_debug(
+			'stream_import_start',
+			array(
+				'id'        => $this->id,
+				'file'      => $file,
+				'file_size' => filesize( $file ),
+			)
+		);
+		$stream_import_started = true;
 		$err = $importer->import( $file );
+		$this->log_upload_debug(
+			'stream_import_returned',
+			array(
+				'id'       => $this->id,
+				'is_error' => is_wp_error( $err ),
+				'code'     => is_wp_error( $err ) ? $err->get_error_code() : null,
+				'message'  => is_wp_error( $err ) ? $err->get_error_message() : null,
+			)
+		);
 
 		// Remove the settings to stop future reconnects.
 		delete_post_meta( $this->id, '_wxr_import_settings' );
+		$this->log_upload_debug( 'stream_settings_deleted', array( 'id' => $this->id ) );
 
 		// Clean up the import file and its attachment record.
 		// — Browser-uploaded files: always delete (they're temporary, and leaving a
@@ -888,6 +1440,13 @@ class WXR_Import_UI {
 			// Just remove the temporary attachment record, leave the file intact
 			wp_delete_post( $this->id, true );
 		}
+		$this->log_upload_debug(
+			'stream_cleanup_done',
+			array(
+				'id'            => $this->id,
+				'is_local_file' => $this->is_local_file,
+			)
+		);
 
 		// Let the browser know we're done.
 		$complete = array(
@@ -898,7 +1457,9 @@ class WXR_Import_UI {
 			$complete['error'] = $err->get_error_message();
 		}
 
+		$this->log_upload_debug( 'stream_complete_emit', array( 'id' => $this->id, 'complete' => $complete ) );
 		$this->emit_sse_message( $complete );
+		$stream_complete_emitted = true;
 		exit;
 	}
 
@@ -1110,6 +1671,9 @@ class WXR_Import_UI {
 		// Extra padding.
 		echo ':' . str_repeat( ' ', 2048 ) . "\n\n";
 
+		if ( function_exists( 'ob_flush' ) ) {
+			@ob_flush();
+		}
 		flush();
 	}
 

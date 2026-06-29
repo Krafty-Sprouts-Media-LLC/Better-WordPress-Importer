@@ -20,6 +20,14 @@
 			});
 		},
 
+		resetProgress: function () {
+			var types = Object.keys( this.complete );
+			for ( var i = 0; i < types.length; i++ ) {
+				this.complete[ types[ i ] ] = 0;
+			}
+			this.render();
+		},
+
 		updateStat: function ( type, done, total ) {
 			var statEl = document.getElementById( 'completed-' + type );
 			if ( ! statEl ) return;
@@ -118,7 +126,14 @@
 		}
 
 		// Stop the SSE stream
-		evtSource.close();
+		hasCompleted = true;
+		if ( retryTimer ) {
+			clearTimeout( retryTimer );
+			retryTimer = null;
+		}
+		if ( evtSource ) {
+			evtSource.close();
+		}
 
 		// Tell the server to clear the import settings so it won't auto-resume
 		$.post( wxrImport.data.cancelUrl, {
@@ -134,15 +149,51 @@
 	});
 
 	// ── SSE connection ─────────────────────────────────────────
-	var evtSource = new EventSource( wxrImport.data.url );
+	var lastAction = 'none';
+	var hasCompleted = false;
+	var retryCount = 0;
+	var maxRetries = 20;
+	var retryTimer = null;
+	var evtSource = null;
 
-	evtSource.onmessage = function ( message ) {
-		var data = JSON.parse( message.data );
+	function showStreamError( message ) {
 		var statusEl = $( '#import-status-message' );
+		if ( statusEl.hasClass( 'notice-success' ) ) return;
+
+		statusEl.html( message );
+		statusEl.removeClass( 'notice-info notice-success' ).addClass( 'notice-error' );
+	}
+
+	function openImportStream() {
+		if ( hasCompleted ) return;
+
+		if ( retryTimer ) {
+			clearTimeout( retryTimer );
+			retryTimer = null;
+		}
+
+		lastAction = 'none';
+		wxrImport.resetProgress();
+		evtSource = new EventSource( wxrImport.data.url );
+
+		evtSource.onmessage = function ( message ) {
+		var data;
+		var statusEl = $( '#import-status-message' );
+
+		try {
+			data = JSON.parse( message.data );
+		} catch ( e ) {
+			evtSource.close();
+			showStreamError( 'The import stream returned malformed data. Last event: ' + lastAction + '.' );
+			return;
+		}
+
+		lastAction = data.action || lastAction;
 
 		switch ( data.action ) {
 			case 'connected':
-				statusEl.html( wxrImport.data.strings.importing || 'Importing&hellip;' );
+				statusEl.html( retryCount > 0 ? 'Import stream reconnected. Resuming import...' : ( wxrImport.data.strings.importing || 'Importing&hellip;' ) );
+				statusEl.removeClass( 'notice-error notice-success' ).addClass( 'notice-info' );
 				break;
 
 			case 'updateDelta':
@@ -150,6 +201,7 @@
 				break;
 
 			case 'complete':
+				hasCompleted = true;
 				evtSource.close();
 				$( '#wxr-cancel-btn' ).hide();
 				$( '#wxr-header-icon' ).removeClass().addClass( 'dashicons dashicons-yes-alt' ).css( 'color', '#00a32a' );
@@ -172,21 +224,37 @@
 				statusEl.removeClass( 'notice-info notice-success' ).addClass( 'notice-error' );
 				break;
 		}
-	};
+		};
 
-	evtSource.onerror = function () {
+		evtSource.onerror = function () {
+		if ( hasCompleted ) return;
 		if ( evtSource.readyState === EventSource.CLOSED ) return;
 		evtSource.close();
-		var statusEl = $( '#import-status-message' );
-		if ( ! statusEl.hasClass( 'notice-success' ) ) {
-			statusEl.html( wxrImport.data.strings.interrupted );
-			statusEl.removeClass( 'notice-info' ).addClass( 'notice-error' );
-		}
-	};
+		retryCount++;
 
-	evtSource.addEventListener( 'log', function ( message ) {
-		var data = JSON.parse( message.data );
+		if ( retryCount > maxRetries ) {
+			showStreamError( wxrImport.data.strings.interrupted + ' Last event: ' + lastAction + '. Retry limit reached.' );
+			return;
+		}
+
+		showStreamError( wxrImport.data.strings.interrupted + ' Last event: ' + lastAction + '. Reconnecting...' );
+		retryTimer = setTimeout( openImportStream, Math.min( retryCount * 3000, 30000 ) );
+		};
+
+		evtSource.addEventListener( 'log', function ( message ) {
+		var data;
+
+		try {
+			data = JSON.parse( message.data );
+		} catch ( e ) {
+			appendLogRow( 'error', 'Malformed stream log event received.' );
+			return;
+		}
+
 		appendLogRow( data.level, data.message );
-	});
+		});
+	}
+
+	openImportStream();
 
 })(jQuery);

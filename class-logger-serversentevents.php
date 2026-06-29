@@ -30,6 +30,9 @@ class WP_Importer_Logger_ServerSentEvents extends WP_Importer_Logger {
 			case 'info':
 				echo "event: log\n";
 				echo 'data: ' . wp_json_encode( $data ) . "\n\n";
+				if ( function_exists( 'ob_flush' ) ) {
+					@ob_flush();
+				}
 				flush();
 				break;
 
@@ -37,6 +40,9 @@ class WP_Importer_Logger_ServerSentEvents extends WP_Importer_Logger {
 				if ( defined( 'IMPORT_DEBUG' ) && IMPORT_DEBUG ) {
 					echo "event: log\n";
 					echo 'data: ' . wp_json_encode( $data ) . "\n\n";
+					if ( function_exists( 'ob_flush' ) ) {
+						@ob_flush();
+					}
 					flush();
 					break;
 				}

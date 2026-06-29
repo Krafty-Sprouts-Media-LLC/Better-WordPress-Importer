@@ -19,7 +19,7 @@
 	<?php do_action( 'pre-html-upload-ui' ); ?>
 	<p id="async-upload-wrap">
 		<label class="screen-reader-text" for="async-upload"><?php esc_html_e( 'Upload', 'wordpress-importer' ) ?></label>
-		<input type="file" name="async-upload" id="async-upload" />
+		<input type="file" name="import" id="async-upload" />
 		<?php submit_button( __( 'Upload File', 'wordpress-importer' ), 'primary', 'html-upload', false ); ?>
 	</p>
 	<div class="clear"></div>

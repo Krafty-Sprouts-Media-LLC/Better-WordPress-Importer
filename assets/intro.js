@@ -63,8 +63,36 @@
 		},
 
 		error: function ( message, data, file ) {
-			renderError( message );
+			var details = message || 'Upload failed.';
+
+			if ( data && data.status ) {
+				details += ' HTTP status: ' + data.status + '.';
+			}
+
+			if ( data && data.response ) {
+				details += ' Response: ' + data.response.replace( /\s+/g, ' ' ).substring( 0, 300 );
+			}
+
+			if ( file && file.name ) {
+				details += ' File: ' + file.name + '.';
+			}
+
+			renderError( details );
 		},
+	};
+
+	var renderUnexpectedResponse = function ( response ) {
+		var message = 'Unexpected response from the server.';
+
+		if ( response && response.status ) {
+			message += ' HTTP status: ' + response.status + '.';
+		}
+
+		if ( response && response.response ) {
+			message += ' Response: ' + response.response.replace( /\s+/g, ' ' ).substring( 0, 300 );
+		}
+
+		renderError( message );
 	};
 
 	var init = function () {
@@ -82,6 +110,23 @@
 		instanceOptions.dropzone = $( '#plupload-upload-ui' );
 
 		uploader = new wp.Uploader( instanceOptions );
+
+		if ( uploader.uploader ) {
+			uploader.uploader.bind( 'FileUploaded', function ( up, file, response ) {
+				var parsed;
+
+				try {
+					parsed = JSON.parse( response.response );
+				} catch ( e ) {
+					renderUnexpectedResponse( response );
+					return;
+				}
+
+				if ( ! parsed || typeof parsed.success === 'undefined' ) {
+					renderUnexpectedResponse( response );
+				}
+			});
+		}
 	};
 
 	$( document ).ready( function () {

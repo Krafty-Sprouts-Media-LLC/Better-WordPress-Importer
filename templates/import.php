@@ -33,7 +33,8 @@ $script_data = array(
 	),
 );
 
-wp_enqueue_script( 'wxr-importer-import', WXR_IMPORTER_URL . 'assets/import.js', array( 'jquery' ), '2.0.1', true );
+$script_path = dirname( __DIR__ ) . '/assets/import.js';
+wp_enqueue_script( 'wxr-importer-import', WXR_IMPORTER_URL . 'assets/import.js', array( 'jquery' ), filemtime( $script_path ), true );
 wp_localize_script( 'wxr-importer-import', 'wxrImportData', $script_data );
 wp_enqueue_style( 'wxr-importer-import', WXR_IMPORTER_URL . 'assets/import.css', array(), '2.0.1' );
 
