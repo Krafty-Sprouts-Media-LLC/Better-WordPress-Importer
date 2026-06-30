@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 30/06/2026
+
+### Added
+- Fresh 1.0.0 rebuild bootstrap on `main` with new `src/` architecture.
+- `Better_Install` creates `better_import_jobs`, `better_import_queue`, and `better_import_log` tables.
+- `Better_Preflight` streaming WXR scan that builds a compact manifest for all entities with no byte offsets.
+- `Better_Import_Job::create()` stores the full manifest (no 500-item cap) and seeds one queue row per entity.
+- Legacy experimental `wxr_import_*` data is detected on activation but never dropped automatically.
+
+### Changed
+- `plugin.php` now loads only the new 1.0 engine; legacy v3 files remain in the repo for reference until Phase F cleanup.
+- v3.0.x engine, templates, assets, tests, and reference copies moved under `legacy/` per `docs/IMPLEMENTATION.md`.
+- `master` branch renamed to `legacy-v3` (frozen v3.0.8 snapshot); `main` is the default development branch.
+
+---
+
 ## [3.0.8] - 29/06/2026
 
 ### Fixed
