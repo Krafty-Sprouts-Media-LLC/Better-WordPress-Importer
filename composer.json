@@ -1,0 +1,45 @@
+{
+	"name"              : "humanmade/wordpress-importer",
+	"description"       : "WordPress importer plugin",
+	"license"           : "GPLv2",
+	"authors"           : [
+		{
+			"name"     : "Contributors",
+			"homepage" : "https://github.com/humanmade/WordPress-Importer/graphs/contributors"
+		}
+	],
+	"type"              : "wordpress-plugin",
+	"minimum-stability" : "stable",
+	"prefer-stable"     : true,
+	"support"           : {
+		"wiki"   : "https://github.com/humanmade/WordPress-Importer/wiki",
+		"source" : "https://github.com/humanmade/WordPress-Importer/releases",
+		"issues" : "https://github.com/humanmade/WordPress-Importer/issues"
+	},
+	"keywords" : [
+		"wordpress",
+		"plugin",
+		"importer"
+	],
+	"require"           : {
+		"php" : ">=8.1"
+	},
+	"require-dev": {
+		"wp-coding-standards/wpcs"                        : "^3.1",
+		"squizlabs/php_codesniffer"                       : "^3.9",
+		"dealerdirect/phpcodesniffer-composer-installer"  : "^1.0",
+		"phpunit/phpunit"                                 : "^9.6",
+		"yoast/phpunit-polyfills"                         : "^3.0",
+		"wp-phpunit/wp-phpunit"                           : "^6.5"
+	},
+	"autoload"          : { },
+	"autoload-dev"      : { },
+	"config": {
+		"allow-plugins": {
+			"dealerdirect/phpcodesniffer-composer-installer": true
+		}
+	},
+	"scripts": {
+		"test": "phpunit"
+	}
+}

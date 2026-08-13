@@ -1,0 +1,914 @@
+<title>WordPress Importer — 2026 concept</title>
+<style>
+	@font-face {
+		font-family: 'UI Mono';
+		src: local('Cascadia Code'), local('SF Mono'), local('Consolas');
+	}
+
+	:root {
+		--bg: #F5F7FA;
+		--surface: #FFFFFF;
+		--surface-alt: #EDF1F6;
+		--surface-sunken: #E5EAF0;
+		--border: #DBE2EA;
+		--text: #17212C;
+		--text-muted: #5B6675;
+		--text-faint: #8894A3;
+		--accent: #1E5B8C;
+		--accent-strong: #123C5C;
+		--accent-wash: #E7F0F8;
+		--success: #1F8A5F;
+		--success-wash: #E5F5EE;
+		--warning: #B4740E;
+		--warning-wash: #FBF1DF;
+		--error: #C43D3D;
+		--error-wash: #FBEAEA;
+		--focus: #1E5B8C;
+		--shadow: 0 1px 2px rgba(23, 33, 44, 0.06), 0 8px 24px -12px rgba(23, 33, 44, 0.18);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root:not([data-theme="light"]) {
+			--bg: #0E151D;
+			--surface: #151E28;
+			--surface-alt: #1C2733;
+			--surface-sunken: #10171F;
+			--border: #2B3947;
+			--text: #E7ECF2;
+			--text-muted: #98A5B5;
+			--text-faint: #6B7889;
+			--accent: #6BAEE0;
+			--accent-strong: #8FC4EA;
+			--accent-wash: #17283A;
+			--success: #4CC38A;
+			--success-wash: #14261F;
+			--warning: #E0A73A;
+			--warning-wash: #2A2115;
+			--error: #E37070;
+			--error-wash: #2A1717;
+			--focus: #6BAEE0;
+			--shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.55);
+		}
+	}
+
+	:root[data-theme="dark"] {
+		--bg: #0E151D;
+		--surface: #151E28;
+		--surface-alt: #1C2733;
+		--surface-sunken: #10171F;
+		--border: #2B3947;
+		--text: #E7ECF2;
+		--text-muted: #98A5B5;
+		--text-faint: #6B7889;
+		--accent: #6BAEE0;
+		--accent-strong: #8FC4EA;
+		--accent-wash: #17283A;
+		--success: #4CC38A;
+		--success-wash: #14261F;
+		--warning: #E0A73A;
+		--warning-wash: #2A2115;
+		--error: #E37070;
+		--error-wash: #2A1717;
+		--focus: #6BAEE0;
+		--shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.55);
+	}
+
+	* { box-sizing: border-box; }
+
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--text);
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+		font-size: 14px;
+		line-height: 1.55;
+		-webkit-font-smoothing: antialiased;
+	}
+
+	.mono {
+		font-family: 'UI Mono', ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.page {
+		max-width: 900px;
+		margin: 0 auto;
+		padding: 40px 24px 80px;
+	}
+
+	.masthead {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 16px;
+		margin-bottom: 28px;
+		flex-wrap: wrap;
+	}
+
+	.masthead h1 {
+		font-size: 22px;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+		margin: 0;
+		text-wrap: balance;
+	}
+
+	.masthead .eyebrow {
+		display: block;
+		font-size: 12px;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--accent);
+		margin: 0 0 4px;
+	}
+
+	.masthead-meta {
+		font-size: 12.5px;
+		color: var(--text-faint);
+		text-align: right;
+	}
+
+	/* Stepper */
+	.stepper {
+		display: flex;
+		align-items: center;
+		gap: 0;
+		margin-bottom: 24px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		padding: 6px;
+		box-shadow: var(--shadow);
+	}
+
+	.step {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 10px 14px;
+		border-radius: 7px;
+		color: var(--text-faint);
+		font-size: 13px;
+		font-weight: 600;
+	}
+
+	.step .num {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		display: grid;
+		place-items: center;
+		font-size: 12px;
+		background: var(--surface-alt);
+		color: var(--text-muted);
+		flex-shrink: 0;
+		transition: background 0.2s, color 0.2s;
+	}
+
+	.step.is-active { background: var(--accent-wash); color: var(--accent-strong); }
+	.step.is-active .num { background: var(--accent); color: #fff; }
+	.step.is-done { color: var(--text-muted); }
+	.step.is-done .num { background: var(--success); color: #fff; }
+	.step.is-done .num::before { content: "✓"; }
+	.step.is-done .num span { display: none; }
+
+	.step-divider {
+		width: 20px;
+		height: 1px;
+		background: var(--border);
+		flex-shrink: 0;
+	}
+
+	/* Card */
+	.card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 12px;
+		box-shadow: var(--shadow);
+		overflow: hidden;
+	}
+
+	.card-body { padding: 28px; }
+
+	.card h2 {
+		font-size: 17px;
+		font-weight: 700;
+		margin: 0 0 6px;
+		text-wrap: balance;
+	}
+
+	.card .lede {
+		color: var(--text-muted);
+		margin: 0 0 22px;
+		max-width: 60ch;
+	}
+
+	.screen { display: none; }
+	.screen.is-visible { display: block; }
+
+	/* Dropzone */
+	.dropzone {
+		border: 1.5px dashed var(--border);
+		border-radius: 10px;
+		background: var(--surface-alt);
+		padding: 40px 24px;
+		text-align: center;
+		transition: border-color 0.15s, background 0.15s;
+		cursor: pointer;
+	}
+
+	.dropzone:hover, .dropzone.is-drag { border-color: var(--accent); background: var(--accent-wash); }
+
+	.dropzone .icon {
+		width: 40px; height: 40px; margin: 0 auto 14px;
+		border-radius: 10px;
+		background: var(--accent-wash);
+		display: grid; place-items: center;
+		color: var(--accent);
+	}
+
+	.dropzone strong { display: block; font-size: 14.5px; margin-bottom: 4px; }
+	.dropzone span { color: var(--text-faint); font-size: 12.5px; }
+
+	/* File card (after selection / during chunked upload) */
+	.file-card {
+		display: none;
+		align-items: center;
+		gap: 14px;
+		border: 1px solid var(--border);
+		background: var(--surface-alt);
+		border-radius: 10px;
+		padding: 14px 16px;
+	}
+
+	.file-card.is-visible { display: flex; }
+
+	.file-card .ficon {
+		width: 36px; height: 36px; border-radius: 8px;
+		background: var(--accent-wash); color: var(--accent);
+		display: grid; place-items: center; flex-shrink: 0;
+	}
+
+	.file-card .finfo { flex: 1; min-width: 0; }
+	.file-card .fname { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.file-card .fmeta { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+
+	.progress-track {
+		height: 6px;
+		border-radius: 999px;
+		background: var(--surface-sunken);
+		overflow: hidden;
+		margin-top: 8px;
+	}
+
+	.progress-fill {
+		height: 100%;
+		background: var(--accent);
+		border-radius: 999px;
+		width: 0%;
+		transition: width 0.3s ease;
+	}
+
+	.chunk-note {
+		font-size: 12px;
+		color: var(--text-faint);
+		margin-top: 10px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.chunk-note .dot {
+		width: 6px; height: 6px; border-radius: 50%; background: var(--success);
+		flex-shrink: 0;
+	}
+
+	/* Buttons */
+	.btn {
+		font: inherit;
+		font-weight: 600;
+		font-size: 13.5px;
+		border-radius: 7px;
+		padding: 10px 18px;
+		border: 1px solid transparent;
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+	}
+
+	.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+	.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+	.btn-primary { background: var(--accent); color: #fff; }
+	.btn-primary:hover:not([disabled]) { background: var(--accent-strong); }
+
+	.btn-quiet { background: transparent; border-color: var(--border); color: var(--text); }
+	.btn-quiet:hover { background: var(--surface-alt); }
+
+	.actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 10px;
+		margin-top: 24px;
+		padding-top: 20px;
+		border-top: 1px solid var(--border);
+	}
+
+	.actions.split { justify-content: space-between; }
+
+	/* Author mapping */
+	.author-row {
+		display: grid;
+		grid-template-columns: 1.1fr auto 1.4fr;
+		align-items: center;
+		gap: 14px;
+		padding: 14px 0;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.author-row:last-child { border-bottom: none; }
+
+	.author-id { display: flex; align-items: center; gap: 10px; }
+
+	.avatar {
+		width: 30px; height: 30px; border-radius: 50%;
+		background: var(--surface-sunken);
+		display: grid; place-items: center;
+		font-size: 12px; font-weight: 700; color: var(--text-muted);
+		flex-shrink: 0;
+	}
+
+	.author-id .login { font-weight: 600; font-size: 13.5px; }
+	.author-id .email { font-size: 11.5px; color: var(--text-faint); }
+
+	.arrow { color: var(--text-faint); }
+
+	select {
+		font: inherit;
+		font-size: 13px;
+		padding: 8px 10px;
+		border-radius: 7px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+		width: 100%;
+	}
+
+	.field-label {
+		display: block;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-muted);
+		margin-bottom: 8px;
+	}
+
+	.checkbox-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 14px;
+		background: var(--surface-alt);
+		border-radius: 8px;
+		margin-top: 18px;
+	}
+
+	.checkbox-row input { margin-top: 3px; }
+	.checkbox-row strong { font-size: 13.5px; }
+	.checkbox-row p { margin: 2px 0 0; font-size: 12.5px; color: var(--text-muted); }
+
+	/* Import screen */
+	.status-banner {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 14px 16px;
+		border-radius: 9px;
+		background: var(--accent-wash);
+		color: var(--accent-strong);
+		font-weight: 600;
+		font-size: 13.5px;
+		margin-bottom: 22px;
+	}
+
+	.status-banner.success { background: var(--success-wash); color: var(--success); }
+	.status-banner.warning { background: var(--warning-wash); color: var(--warning); }
+	.status-banner.error { background: var(--error-wash); color: var(--error); }
+
+	.status-banner .spinner {
+		width: 15px; height: 15px;
+		border-radius: 50%;
+		border: 2px solid rgba(0,0,0,0.15);
+		border-top-color: currentColor;
+		animation: spin 0.8s linear infinite;
+		flex-shrink: 0;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.status-banner .spinner { animation: none; }
+	}
+
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.persist-note {
+		font-size: 12px;
+		color: var(--text-faint);
+		margin: -12px 0 22px;
+	}
+
+	.stat-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+		gap: 12px;
+		margin-bottom: 4px;
+	}
+
+	.stat-tile {
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		padding: 14px 16px;
+		background: var(--surface-alt);
+	}
+
+	.stat-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 10px;
+	}
+
+	.stat-head .label {
+		display: flex; align-items: center; gap: 8px;
+		font-size: 12.5px; font-weight: 600; color: var(--text-muted);
+	}
+
+	.stat-head .icon {
+		width: 22px; height: 22px; border-radius: 6px;
+		background: var(--accent-wash); color: var(--accent);
+		display: grid; place-items: center; flex-shrink: 0;
+	}
+
+	.stat-count {
+		font-size: 12.5px;
+		color: var(--text-faint);
+	}
+
+	.stat-count .n { color: var(--text); font-weight: 700; }
+
+	.log-panel {
+		margin-top: 22px;
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		overflow: hidden;
+	}
+
+	.log-toggle {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 16px;
+		background: var(--surface-alt);
+		border: none;
+		cursor: pointer;
+		font: inherit;
+		font-weight: 600;
+		font-size: 13px;
+		color: var(--text);
+	}
+
+	.log-toggle .chev { transition: transform 0.15s; color: var(--text-faint); }
+	.log-panel.is-open .log-toggle .chev { transform: rotate(180deg); }
+
+	.log-body {
+		display: none;
+		max-height: 220px;
+		overflow-y: auto;
+		background: var(--surface-sunken);
+	}
+
+	.log-panel.is-open .log-body { display: block; }
+
+	.log-row {
+		display: grid;
+		grid-template-columns: 78px 68px 1fr;
+		gap: 10px;
+		padding: 7px 16px;
+		font-size: 12px;
+		border-top: 1px solid var(--border);
+	}
+
+	.log-row:first-child { border-top: none; }
+	.log-row .t { color: var(--text-faint); }
+	.log-row .lvl { font-weight: 700; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.03em; }
+	.log-row .lvl.info { color: var(--accent); }
+	.log-row .lvl.warn { color: var(--warning); }
+	.log-row .msg { color: var(--text-muted); overflow-wrap: anywhere; }
+
+	.summary-panel {
+		display: none;
+		margin-top: 22px;
+		padding: 18px;
+		border-radius: 10px;
+		border: 1px solid var(--border);
+		background: var(--surface-alt);
+	}
+
+	.summary-panel.is-visible { display: block; }
+
+	.summary-panel h3 { margin: 0 0 12px; font-size: 14px; }
+
+	.summary-row {
+		display: flex;
+		justify-content: space-between;
+		font-size: 13px;
+		padding: 6px 0;
+		border-top: 1px solid var(--border);
+	}
+
+	.summary-row:first-of-type { border-top: none; }
+	.summary-row .k { color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+	.summary-row .v { font-weight: 700; }
+
+	.dotk { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+	.dotk.created { background: var(--success); }
+	.dotk.skipped { background: var(--text-faint); }
+	.dotk.failed { background: var(--error); }
+
+	.demo-controls {
+		margin-top: 28px;
+		padding-top: 18px;
+		border-top: 1px dashed var(--border);
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.demo-controls .demo-label {
+		font-size: 11.5px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--text-faint);
+		font-weight: 700;
+		margin-right: 4px;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px; height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
+	}
+
+	@media (max-width: 560px) {
+		.author-row { grid-template-columns: 1fr; gap: 8px; }
+		.stepper { flex-wrap: wrap; }
+		.step span.label { display: none; }
+	}
+</style>
+
+<div class="page">
+
+	<div class="masthead">
+		<div>
+			<span class="eyebrow">Concept — not live code</span>
+			<h1>Import content</h1>
+		</div>
+		<div class="masthead-meta">One page.<br>No reloads between steps.</div>
+	</div>
+
+	<div class="stepper" role="tablist" aria-label="Import steps">
+		<div class="step is-active" id="step-indicator-1"><span class="num"><span>1</span></span><span class="label">Choose file</span></div>
+		<div class="step-divider"></div>
+		<div class="step" id="step-indicator-2"><span class="num"><span>2</span></span><span class="label">Review authors</span></div>
+		<div class="step-divider"></div>
+		<div class="step" id="step-indicator-3"><span class="num"><span>3</span></span><span class="label">Import</span></div>
+	</div>
+
+	<div class="card">
+		<div class="card-body">
+
+			<!-- SCREEN 1: Upload -->
+			<section class="screen is-visible" id="screen-1">
+				<h2>Choose an export file</h2>
+				<p class="lede">Drop a WordPress export (WXR) file, or browse for one. Large files upload in chunks, so a flaky connection won't force you to start over.</p>
+
+				<div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose a WXR file to upload">
+					<div class="icon" aria-hidden="true">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0-12 4.5 4.5M12 3 7.5 7.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+					</div>
+					<strong>Drop your .xml export here</strong>
+					<span>or click to browse — up to 2&nbsp;GB, resumable</span>
+				</div>
+
+				<div class="file-card" id="file-card">
+					<div class="ficon" aria-hidden="true">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M15 2v5h5" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+					</div>
+					<div class="finfo">
+						<div class="fname mono" id="file-name">inquiral.WordPress.2026-08-13.xml</div>
+						<div class="fmeta" id="file-meta">118.4&nbsp;MB · uploading chunk 6 of 24</div>
+						<div class="progress-track"><div class="progress-fill" id="upload-fill"></div></div>
+						<div class="chunk-note" id="chunk-note"><span class="dot" aria-hidden="true"></span> Uploading in the background — you can browse elsewhere and come back.</div>
+					</div>
+				</div>
+
+				<div class="actions">
+					<button class="btn btn-primary" id="btn-to-step2" disabled>Continue<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+				</div>
+			</section>
+
+			<!-- SCREEN 2: Author mapping -->
+			<section class="screen" id="screen-2">
+				<h2>Review authors</h2>
+				<p class="lede">This export references 3 authors. Match each to an existing account, or create a new one.</p>
+
+				<div>
+					<div class="author-row">
+						<div class="author-id"><span class="avatar">RB</span><div><div class="login">rboren</div><div class="email">ryan@example.test</div></div></div>
+						<span class="arrow" aria-hidden="true">→</span>
+						<div><span class="field-label sr-only">Map rboren to</span><select><option>Create new user "rboren"</option><option selected>Map to existing: kingsley</option><option>Map to existing: editor</option></select></div>
+					</div>
+					<div class="author-row">
+						<div class="author-id"><span class="avatar">JC</span><div><div class="login">joncave</div><div class="email">jon@example.test</div></div></div>
+						<span class="arrow" aria-hidden="true">→</span>
+						<div><span class="field-label sr-only">Map joncave to</span><select><option selected>Create new user "joncave"</option><option>Map to existing: kingsley</option></select></div>
+					</div>
+					<div class="author-row">
+						<div class="author-id"><span class="avatar">AN</span><div><div class="login">nacin</div><div class="email">andrew@example.test</div></div></div>
+						<span class="arrow" aria-hidden="true">→</span>
+						<div><span class="field-label sr-only">Map nacin to</span><select><option>Create new user "nacin"</option><option selected>Map to existing: kingsley</option></select></div>
+					</div>
+				</div>
+
+				<label class="checkbox-row">
+					<input type="checkbox" checked>
+					<span><strong>Download and import file attachments</strong><p>Media referenced in the export will be fetched from the original site.</p></span>
+				</label>
+
+				<div class="actions split">
+					<button class="btn btn-quiet" id="btn-to-step1-back">Back</button>
+					<button class="btn btn-primary" id="btn-to-step3">Start import<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+				</div>
+			</section>
+
+			<!-- SCREEN 3: Import -->
+			<section class="screen" id="screen-3">
+				<h2>Importing</h2>
+				<p class="lede">Safe to close this tab or switch apps — the import keeps running and picks up where the page left off.</p>
+
+				<div class="status-banner" id="status-banner" role="status" aria-live="polite">
+					<span class="spinner" aria-hidden="true"></span>
+					<span id="status-text">Importing your content…</span>
+				</div>
+
+				<div class="stat-grid" id="stat-grid">
+					<!-- filled by JS -->
+				</div>
+
+				<div class="summary-panel" id="summary-panel" aria-live="polite">
+					<h3>Run summary</h3>
+					<div class="summary-row"><span class="k"><span class="dotk created" aria-hidden="true"></span>Created</span><span class="v mono" id="sum-created">0</span></div>
+					<div class="summary-row"><span class="k"><span class="dotk skipped" aria-hidden="true"></span>Skipped — already existed</span><span class="v mono" id="sum-skipped">0</span></div>
+					<div class="summary-row"><span class="k"><span class="dotk failed" aria-hidden="true"></span>Failed</span><span class="v mono" id="sum-failed">0</span></div>
+				</div>
+
+				<div class="log-panel" id="log-panel">
+					<button class="log-toggle" id="log-toggle" aria-expanded="false" aria-controls="log-body">
+						<span>Activity log</span>
+						<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+					</button>
+					<div class="log-body mono" id="log-body"></div>
+				</div>
+			</section>
+
+		</div>
+	</div>
+
+	<div class="demo-controls">
+		<span class="demo-label">Demo controls</span>
+		<button class="btn btn-quiet" id="demo-restart">Restart demo</button>
+		<button class="btn btn-quiet" id="demo-drop">Simulate dropped connection</button>
+		<button class="btn btn-quiet" id="demo-fail">Simulate import failure</button>
+	</div>
+
+</div>
+
+<script>
+	(function () {
+		var $ = function (id) { return document.getElementById(id); };
+
+		var state = {
+			counts: { posts: 114, media: 247, users: 20, comments: 268, terms: 1 },
+			complete: { posts: 0, media: 0, users: 0, comments: 0, terms: 0 },
+			summary: { created: 0, skipped: 0, failed: 0 },
+			timers: [],
+		};
+
+		var TYPE_META = {
+			posts: { label: 'Posts & pages', icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 4h9l5 5v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="2"/></svg>' },
+			media: { label: 'Media', icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="m4 18 5-5 4 4 3-3 4 4" stroke="currentColor" stroke-width="2"/></svg>' },
+			users: { label: 'Users', icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.4" stroke="currentColor" stroke-width="2"/><path d="M5 20c1.2-3.6 4-5.4 7-5.4s5.8 1.8 7 5.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' },
+			comments: { label: 'Comments', icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H8l-4 4V5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>' },
+			terms: { label: 'Categories & tags', icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M11 4 4 11v4l9 9 9-9-9-9Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="9" cy="9" r="1.3" fill="currentColor"/></svg>' },
+		};
+
+		function buildStatGrid() {
+			var grid = $('stat-grid');
+			grid.innerHTML = '';
+			Object.keys(state.counts).forEach(function (type) {
+				var meta = TYPE_META[type];
+				var tile = document.createElement('div');
+				tile.className = 'stat-tile';
+				tile.innerHTML =
+					'<div class="stat-head">' +
+						'<span class="label"><span class="icon" aria-hidden="true">' + meta.icon + '</span>' + meta.label + '</span>' +
+					'</div>' +
+					'<div class="stat-count mono"><span class="n" id="n-' + type + '">0</span> / ' + state.counts[type] + '</div>' +
+					'<div class="progress-track"><div class="progress-fill" id="bar-' + type + '"></div></div>';
+				grid.appendChild(tile);
+			});
+		}
+
+		function log(level, message) {
+			var row = document.createElement('div');
+			row.className = 'log-row';
+			var now = new Date();
+			var t = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
+			row.innerHTML = '<span class="t">' + t + '</span><span class="lvl ' + level + '">' + level + '</span><span class="msg"></span>';
+			row.querySelector('.msg').textContent = message;
+			var body = $('log-body');
+			body.appendChild(row);
+			body.scrollTop = body.scrollHeight;
+		}
+
+		function setStep(n) {
+			[1, 2, 3].forEach(function (i) {
+				var el = $('step-indicator-' + i);
+				el.classList.toggle('is-active', i === n);
+				el.classList.toggle('is-done', i < n);
+			});
+			[1, 2, 3].forEach(function (i) {
+				$('screen-' + i).classList.toggle('is-visible', i === n);
+			});
+		}
+
+		// --- Screen 1: simulated chunked upload ---
+		var uploadPct = 0;
+		function runUpload() {
+			$('file-card').classList.add('is-visible');
+			var t = setInterval(function () {
+				uploadPct = Math.min(100, uploadPct + Math.random() * 9 + 3);
+				$('upload-fill').style.width = uploadPct + '%';
+				var chunk = Math.min(24, Math.ceil((uploadPct / 100) * 24));
+				$('file-meta').textContent = '118.4 MB · uploading chunk ' + chunk + ' of 24';
+				if (uploadPct >= 100) {
+					clearInterval(t);
+					$('file-meta').textContent = '118.4 MB · upload complete';
+					$('chunk-note').innerHTML = '<span class="dot" aria-hidden="true"></span> All chunks received and verified.';
+					$('btn-to-step2').disabled = false;
+				}
+			}, 220);
+			state.timers.push(t);
+		}
+
+		$('dropzone').addEventListener('click', function () {
+			if (uploadPct === 0) runUpload();
+		});
+		$('dropzone').addEventListener('keydown', function (e) {
+			if ((e.key === 'Enter' || e.key === ' ') && uploadPct === 0) { e.preventDefault(); runUpload(); }
+		});
+
+		$('btn-to-step2').addEventListener('click', function () { setStep(2); });
+		$('btn-to-step1-back').addEventListener('click', function () { setStep(1); });
+
+		// --- Screen 3: simulated import ---
+		var failMode = false;
+		var dropMode = false;
+
+		function startImport() {
+			setStep(3);
+			buildStatGrid();
+			$('summary-panel').classList.remove('is-visible');
+			$('log-body').innerHTML = '';
+			$('status-banner').className = 'status-banner';
+			$('status-banner').querySelector('.spinner').style.display = '';
+			$('status-text').textContent = 'Importing your content…';
+			log('info', 'Started import of inquiral.WordPress.2026-08-13.xml');
+
+			var types = Object.keys(state.counts);
+			var tickCount = 0;
+
+			var t = setInterval(function () {
+				tickCount++;
+
+				if (dropMode && tickCount === 4) {
+					$('status-banner').className = 'status-banner warning';
+					$('status-banner').querySelector('.spinner').style.display = 'none';
+					$('status-text').textContent = 'Having trouble staying connected. It should keep running in the background — this page will update again once the connection recovers.';
+					log('warn', 'Connection interrupted, retrying…');
+					return;
+				}
+				if (dropMode && tickCount === 7) {
+					$('status-banner').className = 'status-banner';
+					$('status-banner').querySelector('.spinner').style.display = '';
+					$('status-text').textContent = 'Reconnected — resuming live updates.';
+					log('info', 'Reconnected to import stream');
+				}
+				if (dropMode && tickCount > 4 && tickCount < 7) return;
+
+				if (failMode && tickCount === 3) {
+					clearInterval(t);
+					$('status-banner').className = 'status-banner error';
+					$('status-banner').querySelector('.spinner').style.display = 'none';
+					$('status-text').textContent = 'The import could not finish: The file does not exist, please try again.';
+					log('warn', 'Import halted: source file missing');
+					return;
+				}
+
+				var progressed = false;
+				types.forEach(function (type) {
+					if (state.complete[type] >= state.counts[type]) return;
+					if (Math.random() > 0.35) return;
+					progressed = true;
+					state.complete[type]++;
+					var outcome = Math.random();
+					if (outcome > 0.94) {
+						state.summary.failed++;
+						log('warn', 'Failed to import ' + type.replace(/s$/, '') + ' #' + (1000 + state.complete[type]));
+					} else if (outcome > 0.8) {
+						state.summary.skipped++;
+					} else {
+						state.summary.created++;
+					}
+					var pct = Math.round((state.complete[type] / state.counts[type]) * 100);
+					$('n-' + type).textContent = state.complete[type];
+					$('bar-' + type).style.width = pct + '%';
+				});
+
+				var totalDone = types.reduce(function (sum, t) { return sum + state.complete[t]; }, 0);
+				var totalAll = types.reduce(function (sum, t) { return sum + state.counts[t]; }, 0);
+
+				if (totalDone >= totalAll) {
+					clearInterval(t);
+					$('status-banner').className = 'status-banner ' + (state.summary.failed > 0 ? 'warning' : 'success');
+					$('status-banner').querySelector('.spinner').style.display = 'none';
+					$('status-text').textContent = 'Import complete!';
+					$('sum-created').textContent = state.summary.created;
+					$('sum-skipped').textContent = state.summary.skipped;
+					$('sum-failed').textContent = state.summary.failed;
+					$('summary-panel').classList.add('is-visible');
+					log('info', 'Import finished — ' + state.summary.created + ' created, ' + state.summary.skipped + ' skipped, ' + state.summary.failed + ' failed');
+				}
+			}, 160);
+			state.timers.push(t);
+		}
+
+		$('btn-to-step3').addEventListener('click', startImport);
+
+		$('log-toggle').addEventListener('click', function () {
+			var panel = $('log-panel');
+			var open = panel.classList.toggle('is-open');
+			this.setAttribute('aria-expanded', open ? 'true' : 'false');
+		});
+
+		$('demo-restart').addEventListener('click', function () {
+			state.timers.forEach(clearInterval);
+			state.timers = [];
+			state.complete = { posts: 0, media: 0, users: 0, comments: 0, terms: 0 };
+			state.summary = { created: 0, skipped: 0, failed: 0 };
+			uploadPct = 0;
+			failMode = false;
+			dropMode = false;
+			$('file-card').classList.remove('is-visible');
+			$('upload-fill').style.width = '0%';
+			$('btn-to-step2').disabled = true;
+			setStep(1);
+		});
+
+		$('demo-drop').addEventListener('click', function () {
+			dropMode = true;
+			failMode = false;
+			state.timers.forEach(clearInterval);
+			state.complete = { posts: 0, media: 0, users: 0, comments: 0, terms: 0 };
+			state.summary = { created: 0, skipped: 0, failed: 0 };
+			startImport();
+		});
+
+		$('demo-fail').addEventListener('click', function () {
+			failMode = true;
+			dropMode = false;
+			state.timers.forEach(clearInterval);
+			state.complete = { posts: 0, media: 0, users: 0, comments: 0, terms: 0 };
+			state.summary = { created: 0, skipped: 0, failed: 0 };
+			startImport();
+		});
+
+		buildStatGrid();
+	})();
+</script>

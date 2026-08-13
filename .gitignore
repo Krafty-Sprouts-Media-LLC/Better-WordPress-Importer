@@ -1,0 +1,13 @@
+# Package Managers
+## Composer
+/vendor
+
+# Local test config (machine-specific DB credentials)
+/tests/wp-tests-config.php
+
+# PHPUnit cache
+.phpunit.result.cache
+
+# Local AI agent tooling
+/.agents
+/.claude
