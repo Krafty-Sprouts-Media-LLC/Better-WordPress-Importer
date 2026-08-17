@@ -1,20 +1,19 @@
 {
-	"name"              : "humanmade/wordpress-importer",
-	"description"       : "WordPress importer plugin",
+	"name"              : "krafty-sprouts-media-llc/better-wordpress-importer",
+	"description"       : "Better WordPress Importer — a maintained fork of WordPress Importer v2",
 	"license"           : "GPLv2",
 	"authors"           : [
 		{
-			"name"     : "Contributors",
-			"homepage" : "https://github.com/humanmade/WordPress-Importer/graphs/contributors"
+			"name"     : "Krafty Sprouts Media, LLC",
+			"homepage" : "https://kraftysprouts.com"
 		}
 	],
 	"type"              : "wordpress-plugin",
 	"minimum-stability" : "stable",
 	"prefer-stable"     : true,
 	"support"           : {
-		"wiki"   : "https://github.com/humanmade/WordPress-Importer/wiki",
-		"source" : "https://github.com/humanmade/WordPress-Importer/releases",
-		"issues" : "https://github.com/humanmade/WordPress-Importer/issues"
+		"source" : "https://github.com/Krafty-Sprouts-Media-LLC/Better-WordPress-Importer",
+		"issues" : "https://github.com/Krafty-Sprouts-Media-LLC/Better-WordPress-Importer/issues"
 	},
 	"keywords" : [
 		"wordpress",

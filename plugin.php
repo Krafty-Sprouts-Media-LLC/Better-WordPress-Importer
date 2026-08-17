@@ -1,11 +1,11 @@
 <?php
 /*
-Plugin Name: WordPress Importer v2
-Plugin URI: http://wordpress.org/extend/plugins/wordpress-importer/
+Plugin Name: Better WordPress Importer
+Plugin URI: https://github.com/Krafty-Sprouts-Media-LLC/Better-WordPress-Importer
 Description: Import posts, pages, comments, custom fields, categories, tags and more from a WordPress export file.
-Author: wordpressdotorg, rmccue
-Author URI: http://wordpress.org/
-Version: 2.1.3
+Author: Krafty Sprouts Media, LLC
+Author URI: https://kraftysprouts.com
+Version: 2.1.4
 Text Domain: wordpress-importer
 License: GPL version 2 or later - http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 */
@@ -39,7 +39,7 @@ function wpimportv2_init() {
 	$GLOBALS['wxr_importer'] = new WXR_Import_UI();
 	register_importer(
 		'wordpress',
-		'WordPress (v2)',
+		'Better WordPress Importer',
 		__( 'Import <strong>posts, pages, comments, custom fields, categories, and tags</strong> from a WordPress export (WXR) file.', 'wordpress-importer' ),
 		array( $GLOBALS['wxr_importer'], 'dispatch' )
 	);

@@ -2,6 +2,11 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.4] - 2026-08-17
+
+### Changed
+- Plugin identity is now **Better WordPress Importer** (Plugins screen, Tools → Import, README, Composer package). Internal importer slug (`wordpress`) and text domain are unchanged so it still occupies the standard WordPress importer slot.
+
 ## [2.1.3] - 2026-08-17
 
 ### Fixed
