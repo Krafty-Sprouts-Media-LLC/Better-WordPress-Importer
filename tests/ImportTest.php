@@ -98,4 +98,54 @@ class ImportTest extends WP_UnitTestCase {
 		$comments = get_comments( array( 'post_id' => $post->ID ) );
 		$this->assertCount( 1, $comments );
 	}
+
+	/**
+	 * WordPress.com-style exports omit channel-level <wp:category>/<wp:tag>
+	 * nodes and only list terms on each <item>. Those must still be found
+	 * or created, then assigned — otherwise every post lands in Uncategorized.
+	 */
+	public function test_item_level_terms_are_created_and_assigned() {
+		$importer = $this->get_importer();
+		$result = $importer->import( dirname( __FILE__ ) . '/data/item-only-terms.xml' );
+
+		$this->assertNotWPError( $result );
+
+		$post = get_page_by_path( 'yamaha-golf-carts', OBJECT, 'post' );
+		$this->assertNotNull( $post );
+
+		$categories = wp_get_post_terms( $post->ID, 'category', array( 'fields' => 'slugs' ) );
+		$this->assertContains( 'vehicles', $categories );
+		$this->assertNotContains( 'uncategorized', $categories );
+
+		$tags = wp_get_post_terms( $post->ID, 'post_tag', array( 'fields' => 'slugs' ) );
+		$this->assertContains( 'golf-carts', $tags );
+	}
+
+	/**
+	 * Re-importing must attach missing terms to posts that already exist
+	 * (the first pass of a WordPress.com-style file left them Uncategorized).
+	 */
+	public function test_reimport_assigns_terms_to_existing_uncategorized_posts() {
+		$existing_id = wp_insert_post(
+			array(
+				'post_title'  => 'Yamaha Golf Carts',
+				'post_name'   => 'yamaha-golf-carts',
+				'post_status' => 'publish',
+				'post_type'   => 'post',
+				'guid'        => 'https://example.test/?p=187605',
+			)
+		);
+		$this->assertGreaterThan( 0, $existing_id );
+		wp_set_post_terms( $existing_id, array( 'uncategorized' ), 'category' );
+
+		$importer = $this->get_importer();
+		$importer->import( dirname( __FILE__ ) . '/data/item-only-terms.xml' );
+
+		$categories = wp_get_post_terms( $existing_id, 'category', array( 'fields' => 'slugs' ) );
+		$this->assertContains( 'vehicles', $categories );
+		$this->assertNotContains( 'uncategorized', $categories );
+
+		$tags = wp_get_post_terms( $existing_id, 'post_tag', array( 'fields' => 'slugs' ) );
+		$this->assertContains( 'golf-carts', $tags );
+	}
 }

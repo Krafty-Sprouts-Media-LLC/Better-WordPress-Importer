@@ -15,6 +15,7 @@
 		token: null,
 		attachmentId: null,
 		users: [],
+		siteUsers: [],
 		counts: {},
 		allowFetchAttachments: false,
 	};
@@ -131,6 +132,7 @@
 	function onUploadComplete( data ) {
 		state.attachmentId = data.attachment_id;
 		state.users = data.users || [];
+		state.siteUsers = data.site_users || [];
 		state.counts = data.counts || {};
 		state.allowFetchAttachments = !! data.allow_fetch_attachments;
 
@@ -225,12 +227,27 @@
 			var selectWrap = document.createElement( 'div' );
 			var select = document.createElement( 'select' );
 			select.className = 'wxrimp-user-select';
+
+			( state.siteUsers || [] ).forEach( function ( siteUser ) {
+				var opt = document.createElement( 'option' );
+				opt.value = String( siteUser.id );
+				opt.textContent = siteUser.display_name + ' (' + siteUser.login + ')';
+				select.appendChild( opt );
+			} );
+
 			if ( cfg.allowCreateUsers ) {
 				var createOpt = document.createElement( 'option' );
 				createOpt.value = '';
 				createOpt.textContent = cfg.strings.createNewUser + ' “' + user.login + '”';
 				select.appendChild( createOpt );
 			}
+
+			if ( user.matched_id ) {
+				select.value = String( user.matched_id );
+			} else if ( cfg.allowCreateUsers ) {
+				select.value = '';
+			}
+
 			selectWrap.appendChild( select );
 
 			row.appendChild( idBlock );
@@ -238,29 +255,9 @@
 			row.appendChild( selectWrap );
 
 			container.appendChild( row );
-			populateUserOptions( select );
 		} );
 
 		$( 'wxrimp-fetch-attachments-row' ).hidden = ! state.allowFetchAttachments;
-	}
-
-	function populateUserOptions( select ) {
-		if ( ! window.wp || ! window.wp.apiFetch ) {
-			return;
-		}
-
-		window.wp.apiFetch( { path: '/wp/v2/users?per_page=100&orderby=name&order=asc' } )
-			.then( function ( users ) {
-				users.forEach( function ( u ) {
-					var opt = document.createElement( 'option' );
-					opt.value = u.id;
-					opt.textContent = u.name + ' (' + u.slug + ')';
-					select.appendChild( opt );
-				} );
-			} )
-			.catch( function () {
-				// Non-fatal — falls back to "create new user" only.
-			} );
 	}
 
 	$( 'wxrimp-to-step1-back' ).addEventListener( 'click', function () { setStep( 1 ); } );

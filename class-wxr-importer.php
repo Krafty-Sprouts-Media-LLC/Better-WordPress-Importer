@@ -835,7 +835,14 @@ class WXR_Importer extends WP_Importer {
 			 */
 			do_action( 'wxr_importer.process_already_imported.post', $data );
 
-			// Even though this post already exists, new comments might need importing
+			// Even though this post already exists, terms (and new comments)
+			// may still be missing — WordPress.com-style WXR files have no
+			// channel-level <wp:category>/<wp:tag> nodes, so a first pass
+			// that only mapped those nodes would have left posts Uncategorized.
+			if ( $original_id ) {
+				$this->mapping['post'][ $original_id ] = (int) $post_exists;
+			}
+			$this->assign_post_terms( (int) $post_exists, $terms, $data );
 			$this->process_comments( $comments, $original_id, $data, $post_exists );
 
 			return false;
@@ -972,27 +979,7 @@ class WXR_Importer extends WP_Importer {
 		) );
 
 		// Handle the terms too
-		$terms = apply_filters( 'wp_import_post_terms', $terms, $post_id, $data );
-
-		if ( ! empty( $terms ) ) {
-			$term_ids = array();
-			foreach ( $terms as $term ) {
-				$taxonomy = $term['taxonomy'];
-				$key = sha1( $taxonomy . ':' . $term['slug'] );
-
-				if ( isset( $this->mapping['term'][ $key ] ) ) {
-					$term_ids[ $taxonomy ][] = (int) $this->mapping['term'][ $key ];
-				} else {
-					$meta[] = array( 'key' => '_wxr_import_term', 'value' => $term );
-					$requires_remapping = true;
-				}
-			}
-
-			foreach ( $term_ids as $tax => $ids ) {
-				$tt_ids = wp_set_post_terms( $post_id, $ids, $tax );
-				do_action( 'wp_import_set_post_terms', $tt_ids, $ids, $tax, $post_id, $data );
-			}
-		}
+		$this->assign_post_terms( $post_id, $terms, $data );
 
 		$this->process_comments( $comments, $post_id, $data );
 		$this->process_post_meta( $meta, $post_id, $data );
@@ -1013,6 +1000,75 @@ class WXR_Importer extends WP_Importer {
 		do_action( 'wxr_importer.processed.post', $post_id, $data, $meta, $comments, $terms );
 
 		return null;
+	}
+
+	/**
+	 * Find or create each term, then assign them on the post.
+	 *
+	 * Channel-level `<wp:category>` / `<wp:tag>` / `<wp:term>` nodes are
+	 * processed first when present. WordPress.com-style exports omit those
+	 * and only list terms on each `<item>` as `<category domain="…" nicename="…">`.
+	 * In that case this still finds an existing term by slug, or creates it,
+	 * then maps it — the same find-then-map-or-create behaviour as the
+	 * classic WordPress importer.
+	 *
+	 * @since 2.1.3
+	 *
+	 * @param int   $post_id Destination post ID.
+	 * @param array $terms   Parsed term rows from the WXR item.
+	 * @param array $data    Parsed post data (passed through to filters).
+	 */
+	protected function assign_post_terms( int $post_id, array $terms, array $data ): void {
+		$terms = apply_filters( 'wp_import_post_terms', $terms, $post_id, $data );
+		if ( empty( $terms ) ) {
+			return;
+		}
+
+		$term_ids = array();
+		foreach ( $terms as $term ) {
+			$term_id = $this->ensure_term( $term );
+			if ( $term_id ) {
+				$term_ids[ $term['taxonomy'] ][] = $term_id;
+			}
+		}
+
+		foreach ( $term_ids as $tax => $ids ) {
+			$tt_ids = wp_set_post_terms( $post_id, $ids, $tax );
+			do_action( 'wp_import_set_post_terms', $tt_ids, $ids, $tax, $post_id, $data );
+		}
+	}
+
+	/**
+	 * Return a destination term ID, creating the term if needed.
+	 *
+	 * @since 2.1.3
+	 *
+	 * @param array $term {
+	 *     @type string $taxonomy Taxonomy slug.
+	 *     @type string $slug     Term slug.
+	 *     @type string $name     Term name.
+	 * }
+	 * @return int Term ID, or 0 if it cannot be resolved.
+	 */
+	protected function ensure_term( array $term ): int {
+		$taxonomy = isset( $term['taxonomy'] ) ? $term['taxonomy'] : '';
+		$slug     = isset( $term['slug'] ) ? $term['slug'] : '';
+		if ( empty( $taxonomy ) || empty( $slug ) || ! taxonomy_exists( $taxonomy ) ) {
+			return 0;
+		}
+
+		if ( empty( $term['name'] ) ) {
+			$term['name'] = $slug;
+		}
+
+		$mapping_key = sha1( $taxonomy . ':' . $slug );
+		if ( isset( $this->mapping['term'][ $mapping_key ] ) ) {
+			return (int) $this->mapping['term'][ $mapping_key ];
+		}
+
+		$this->process_term( $term, array() );
+
+		return isset( $this->mapping['term'][ $mapping_key ] ) ? (int) $this->mapping['term'][ $mapping_key ] : 0;
 	}
 
 	/**
@@ -1688,8 +1744,8 @@ class WXR_Importer extends WP_Importer {
 				continue;
 			}
 
-			$key = array_search( $child->tagName, $tag_name );
-			if ( $key ) {
+			$key = array_search( $child->tagName, $tag_name, true );
+			if ( false !== $key ) {
 				$data[ $key ] = $child->textContent;
 			}
 		}
@@ -1797,6 +1853,7 @@ class WXR_Importer extends WP_Importer {
 
 		$this->mapping['term'][ $mapping_key ] = $term_id;
 		$this->mapping['term_id'][ $original_id ] = $term_id;
+		$this->mark_term_exists( $data, $term_id );
 
 		$this->logger->info( sprintf(
 			__( 'Imported "%s" (%s)', 'wordpress-importer' ),

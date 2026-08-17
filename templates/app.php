@@ -53,8 +53,8 @@ $script_data = array(
 	),
 );
 
-wp_enqueue_style( 'wxr-importer-app', plugins_url( 'assets/app.css', dirname( __FILE__ ) ), array(), '2.1.0' );
-wp_enqueue_script( 'wxr-importer-app', plugins_url( 'assets/app.js', dirname( __FILE__ ) ), array( 'wp-api-fetch' ), '2.1.0', true );
+wp_enqueue_style( 'wxr-importer-app', plugins_url( 'assets/app.css', dirname( __FILE__ ) ), array(), '2.1.3' );
+wp_enqueue_script( 'wxr-importer-app', plugins_url( 'assets/app.js', dirname( __FILE__ ) ), array(), '2.1.3', true );
 wp_localize_script( 'wxr-importer-app', 'wxrImporterApp', $script_data );
 
 $this->render_header();

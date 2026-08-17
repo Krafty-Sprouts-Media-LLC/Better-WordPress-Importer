@@ -2,6 +2,21 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.3] - 2026-08-17
+
+### Fixed
+- Posts imported from WordPress.com-style WXR files (no channel-level `<wp:category>` / `<wp:tag>` / `<wp:term>` lists — terms only on each `<item>`) all landed in Uncategorized, and tags/other taxonomies were dropped the same way. The importer only assigned terms that had already been mapped from those channel-level nodes; misses were stored as `_wxr_import_term` post meta and never applied in `post_process()`. Item-level terms are now found by slug, or created, then assigned — including on re-import of posts that already exist.
+
+## [2.1.2] - 2026-08-17
+
+### Fixed
+- Author review always defaulted to “Create new user …” and never checked whether the WXR author already exists on this site. Matching is now done server-side: email first (unique, survives a renamed login), then `user_login`, then nicename. A match is pre-selected in the dropdown; “Create new user” stays available at the bottom for authors who are genuinely new. Existing users are listed from `get_users()` rather than a REST `/wp/v2/users` call (which omitted emails in `view` context, used nicename instead of login, capped at 100, and was fired once per author).
+
+## [2.1.1] - 2026-08-17
+
+### Fixed
+- Dashboard WXR upload failed with "Sorry, you are not allowed to upload this file type." `handle_chunk_upload()` finalized the assembled file via `wp_handle_sideload()`, which runs WordPress's MIME sniff (`wp_check_filetype_and_ext()`). WXR files contain HTML in post content, so `finfo` often reports `text/html` or `text/xml` instead of `application/xml` — a mismatch WordPress rejects even when `.xml` is allowed via `upload_mimes`. The chunked upload now skips that sniff the same way core's `wp_import_handle_upload()` does (`test_type => false`), while still requiring a `.xml` extension before any chunk is stored.
+
 ## [2.1.0] - 2026-08-13
 
 ### Added

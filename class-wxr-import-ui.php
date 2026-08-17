@@ -84,6 +84,11 @@ class WXR_Import_UI {
 		$total_chunks = isset( $_POST['total_chunks'] ) ? (int) $_POST['total_chunks'] : 0;
 		$filename     = isset( $_POST['filename'] ) ? sanitize_file_name( wp_unslash( $_POST['filename'] ) ) : 'import.xml';
 
+		$filetype = wp_check_filetype( $filename, array( 'xml' => 'application/xml' ) );
+		if ( empty( $filetype['ext'] ) || 'xml' !== $filetype['ext'] ) {
+			wp_send_json_error( array( 'message' => __( 'Please upload a WordPress export (WXR) file with a .xml extension.', 'wordpress-importer' ) ), 400 );
+		}
+
 		if ( $total_chunks < 1 || $chunk_index < 0 || $chunk_index >= $total_chunks ) {
 			wp_send_json_error( array( 'message' => __( 'Invalid chunk index.', 'wordpress-importer' ) ), 400 );
 		}
@@ -124,11 +129,19 @@ class WXR_Import_UI {
 		);
 		$overrides = array(
 			'test_form' => false,
+			'test_type' => false,
 			'action'    => 'wxr-import-upload-chunk',
 		);
 
 		// wp_handle_sideload() moves (not copies) the source file, so the
 		// partial file is gone after this regardless of outcome.
+		//
+		// test_type is skipped on purpose, matching core's
+		// wp_import_handle_upload(): WXR files contain HTML in post
+		// content, so finfo often reports text/html (or text/xml) which
+		// fails wp_check_filetype_and_ext() even when .xml is allowed via
+		// upload_mimes. That is the "Sorry, you are not allowed to upload
+		// this file type." error on the dashboard upload step.
 		$sideloaded = wp_handle_sideload( $file_array, $overrides );
 		if ( isset( $sideloaded['error'] ) ) {
 			if ( file_exists( $partial_path ) ) {
@@ -137,8 +150,10 @@ class WXR_Import_UI {
 			wp_send_json_error( array( 'message' => $sideloaded['error'] ) );
 		}
 
+		$mime = ! empty( $sideloaded['type'] ) ? $sideloaded['type'] : 'application/xml';
+
 		$attachment_id = wp_insert_attachment( array(
-			'post_mime_type' => $sideloaded['type'],
+			'post_mime_type' => $mime,
 			'post_title'     => $filename,
 			'post_content'   => '',
 			'post_status'    => 'private',
@@ -156,18 +171,21 @@ class WXR_Import_UI {
 
 		$users = array();
 		foreach ( $info->users as $index => $user ) {
+			$matched = $this->find_existing_user( $user );
 			$users[] = array(
 				'index'        => $index,
 				'login'        => $user['data']['user_login'],
 				'display_name' => $user['data']['display_name'],
 				'email'        => isset( $user['data']['user_email'] ) ? $user['data']['user_email'] : '',
 				'old_id'       => isset( $user['data']['ID'] ) ? (int) $user['data']['ID'] : 0,
+				'matched_id'   => $matched ? (int) $matched->ID : 0,
 			);
 		}
 
 		wp_send_json_success( array(
 			'attachment_id'        => $attachment_id,
 			'users'                => $users,
+			'site_users'           => $this->get_site_users_for_mapping(),
 			'allow_create_users'   => $this->allow_create_users(),
 			'allow_fetch_attachments' => $this->allow_fetch_attachments(),
 			'counts' => array(
@@ -496,6 +514,76 @@ class WXR_Import_UI {
 	 */
 	protected function allow_create_users() {
 		return apply_filters( 'import_allow_create_users', true );
+	}
+
+	/**
+	 * Find a destination-site user that matches a WXR author.
+	 *
+	 * Email is checked first (unique, survives a login rename), then
+	 * user_login, then nicename.
+	 *
+	 * @since 2.1.2
+	 *
+	 * @param array $wxr_user A WXR user item with a `data` key.
+	 * @return WP_User|null
+	 */
+	protected function find_existing_user( array $wxr_user ) {
+		$data  = isset( $wxr_user['data'] ) && is_array( $wxr_user['data'] ) ? $wxr_user['data'] : array();
+		$email = isset( $data['user_email'] ) ? $data['user_email'] : '';
+		$login = isset( $data['user_login'] ) ? $data['user_login'] : '';
+
+		if ( is_email( $email ) ) {
+			$user = get_user_by( 'email', $email );
+			if ( $user ) {
+				return $user;
+			}
+		}
+
+		if ( $login ) {
+			$user = get_user_by( 'login', $login );
+			if ( $user ) {
+				return $user;
+			}
+
+			$user = get_user_by( 'slug', $login );
+			if ( $user ) {
+				return $user;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Destination-site users for the author-mapping dropdown.
+	 *
+	 * @since 2.1.2
+	 *
+	 * @return array[] {
+	 *     @type int    $id
+	 *     @type string $login
+	 *     @type string $display_name
+	 * }
+	 */
+	protected function get_site_users_for_mapping() {
+		$users = get_users(
+			array(
+				'orderby' => 'display_name',
+				'order'   => 'ASC',
+				'fields'  => array( 'ID', 'user_login', 'display_name' ),
+			)
+		);
+
+		$out = array();
+		foreach ( $users as $user ) {
+			$out[] = array(
+				'id'           => (int) $user->ID,
+				'login'        => $user->user_login,
+				'display_name' => $user->display_name,
+			);
+		}
+
+		return $out;
 	}
 
 	/**
