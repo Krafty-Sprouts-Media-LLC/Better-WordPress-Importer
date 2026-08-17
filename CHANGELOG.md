@@ -2,6 +2,16 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.6] - 2026-08-17
+
+### Changed
+- README rewritten for this fork (install, dashboard/CLI usage, features). Added CREDITS.md (classic Importer, humanmade v2, Krafty Sprouts Media), SECURITY.md, docs/USAGE.md, docs/FILTERS.md, and GitHub issue/PR templates. CONTRIBUTING.md updated for PHP 8.1 and this repository.
+
+## [2.1.5] - 2026-08-17
+
+### Fixed
+- Step 3 of the dashboard stepper stayed as a numbered circle after “Import complete!” while steps 1 and 2 already showed a green check. The Import step is now marked done on a successful finish.
+
 ## [2.1.4] - 2026-08-17
 
 ### Changed

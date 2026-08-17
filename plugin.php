@@ -5,7 +5,7 @@ Plugin URI: https://github.com/Krafty-Sprouts-Media-LLC/Better-WordPress-Importe
 Description: Import posts, pages, comments, custom fields, categories, tags and more from a WordPress export file.
 Author: Krafty Sprouts Media, LLC
 Author URI: https://kraftysprouts.com
-Version: 2.1.4
+Version: 2.1.6
 Text Domain: wordpress-importer
 License: GPL version 2 or later - http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 */

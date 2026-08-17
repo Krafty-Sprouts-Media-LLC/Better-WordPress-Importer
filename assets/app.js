@@ -433,6 +433,10 @@
 		banner.className = 'wxrimp-status-banner ' + ( summary.failed > 0 ? 'warning' : 'success' );
 		$( 'wxrimp-status-text' ).textContent = cfg.strings.complete;
 
+		var step3 = $( 'wxrimp-step-indicator-3' );
+		step3.classList.remove( 'is-active' );
+		step3.classList.add( 'is-done' );
+
 		var summaryText = cfg.strings.summary
 			.replace( '%1$d', summary.created )
 			.replace( '%2$d', summary.skipped )
