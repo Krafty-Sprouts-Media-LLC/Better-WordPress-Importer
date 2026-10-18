@@ -13,7 +13,8 @@ Useful hooks for site-specific behaviour. Names with a dot (`wxr_importer.*`) ar
 | `import_allow_fetch_attachments` | `true` | Show the fetch-attachments checkbox |
 | `import_upload_size_limit` | `wp_max_upload_size()` | Max WXR upload size |
 | `import_attachment_size_limit` | `0` (unlimited) | Max size for a fetched attachment |
-| `wxr_importer.prefetch_attachments` | `true` | Concurrent attachment prefetch before the main loop |
+| `wxr_importer.prefetch_attachments` | `true` | Concurrent attachment prefetch, in batches ahead of the main loop |
+| `wxr_importer.prefetch_batch_size` | `100` | Attachment files downloaded per prefetch batch |
 | `wxr_importer.prefetch_concurrency` | `4` | How many attachment downloads at once |
 | `wxr_importer.auto_disable_prefill` | `true` | Skip upfront post/comment/term prefetch on large files |
 | `wxr_importer.prefill_threshold_bytes` | `20 * MB_IN_BYTES` | Size above which prefill is skipped |
@@ -26,4 +27,4 @@ Useful hooks for site-specific behaviour. Names with a dot (`wxr_importer.*`) ar
 | `import_post_meta_key` | meta key | Return false to skip that key |
 | `wp_import_post_terms` | terms on a post | Adjust terms before assign |
 
-Actions of note: `import_start`, `import_end`, `wxr_importer.processed.post`, `wxr_importer.processed.term`, `wxr_importer.processed.user`.
+Actions of note: `import_start`, `import_end`, `wxr_importer.processed.post`, `wxr_importer.processed.term`, `wxr_importer.processed.user`, `wxr_importer.prefetch_progress` (`$done`, `$total`; fires every ~15s during an attachment download batch).

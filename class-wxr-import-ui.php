@@ -109,6 +109,27 @@ class WXR_Import_UI {
 			unlink( $partial_path );
 		}
 
+		// The client sends the byte offset this chunk starts at, so a chunk
+		// retried after a dropped response (e.g. a proxy's 502 Bad Gateway
+		// arriving after PHP already appended it) is not written twice.
+		if ( isset( $_POST['offset'] ) ) {
+			$offset = max( 0, (int) $_POST['offset'] );
+			clearstatcache( true, $partial_path );
+			$current_size = file_exists( $partial_path ) ? filesize( $partial_path ) : 0;
+
+			if ( $current_size < $offset ) {
+				wp_send_json_error( array( 'message' => __( 'An earlier part of the upload is missing. Please choose the file again to restart the upload.', 'wordpress-importer' ) ), 409 );
+			}
+
+			if ( $current_size > $offset ) {
+				$handle = fopen( $partial_path, 'r+' );
+				if ( ! $handle || ! ftruncate( $handle, $offset ) ) {
+					wp_send_json_error( array( 'message' => __( 'Could not save the uploaded chunk.', 'wordpress-importer' ) ) );
+				}
+				fclose( $handle );
+			}
+		}
+
 		$chunk_contents = file_get_contents( $_FILES['chunk']['tmp_name'] );
 		if ( false === $chunk_contents || false === file_put_contents( $partial_path, $chunk_contents, FILE_APPEND | LOCK_EX ) ) {
 			wp_send_json_error( array( 'message' => __( 'Could not save the uploaded chunk.', 'wordpress-importer' ) ) );
@@ -118,7 +139,12 @@ class WXR_Import_UI {
 			wp_send_json_success( array( 'received' => $chunk_index ) );
 		}
 
-		// Final chunk — finalize into a real attachment.
+		// Final chunk — finalize into a real attachment. Scanning a large
+		// export for authors and counts can outlast the default time limit.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 300 );
+		}
+
 		if ( ! function_exists( 'wp_handle_sideload' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/file.php';
 		}
@@ -431,6 +457,14 @@ class WXR_Import_UI {
 		add_action( 'wxr_importer.process_already_imported.term', array( $this, 'already_imported_term' ) );
 		add_action( 'wxr_importer.processed.user', array( $this, 'imported_user' ) );
 		add_action( 'wxr_importer.process_failed.user', array( $this, 'failed_user' ) );
+
+		// Attachment downloads can run for minutes without a post being
+		// processed; keep the run lock fresh so a browser reconnect during
+		// that time is not mistaken for an abandoned run and allowed to
+		// start a second, concurrent pass.
+		add_action( 'wxr_importer.prefetch_progress', function () {
+			$this->maybe_refresh_import_lock();
+		} );
 
 		// Clean up some memory
 		unset( $settings );

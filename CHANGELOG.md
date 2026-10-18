@@ -2,6 +2,35 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.10] - 2026-10-18
+
+### Fixed
+- Featured images were never remapped. `_thumbnail_id` is copied from the export as the attachment's ID on the original site, and the step that maps it to the newly imported attachment was commented out (and read a mapping that was never filled). Imported posts could show no featured image, or the wrong one. The remap now runs at the end of every import using the importer's post ID mapping, and only updates values that still hold the original ID.
+- Re-running an interrupted import now repairs what the first run left unfinished. For posts and attachments that already exist, it re-queues any pending parent link (so “Unattached” media gets attached) and remaps featured images.
+
+## [2.1.9] - 2026-10-18
+
+### Fixed
+- Imports with “Download and import file attachments” on could stall at “Prefetching N attachment(s)…” and then start over, repeatedly. Every attachment was downloaded before the first post was imported, with no output in between, so on a large export (6,460 files) the web server dropped the silent connection after its read timeout (300s on DokployPress). The run lock was only refreshed when progress was sent, so it looked abandoned after 5 minutes and each browser reconnect started another full, concurrent run.
+  - Attachments are now prefetched in batches of 100 (`wxr_importer.prefetch_batch_size`) as the import reaches them, so posts start importing straight away and temp-disk use is limited to one batch.
+  - Each batch logs its size, and long batches log progress every 15 seconds, which keeps the connection active.
+  - The run lock is refreshed during downloads (new `wxr_importer.prefetch_progress` action), so a reconnect no longer starts a duplicate run.
+  - Prefetched files that are never used (their attachment already existed) are deleted at the end of the import.
+
+## [2.1.8] - 2026-10-18
+
+### Fixed
+- Uploads still failed with 502 Bad Gateway on hosts whose front proxy ends any request after 60 seconds: on a slower uplink an 8 MB chunk could not finish in time, and retrying the same size failed the same way. Chunks now start at 2 MB and halve after each gateway/timeout failure (down to 256 KB), so the upload adapts to the connection. Progress is tracked by bytes stored rather than chunk number, and shows as a percentage.
+- Dashboard CSS/JS enqueued as 2.1.8 so browsers drop the cached 2.1.7 script.
+
+## [2.1.7] - 2026-10-18
+
+### Fixed
+- Large uploads could fail with `Upload failed: Unexpected token 'B', "Bad Gateway" is not valid JSON`. When a proxy or CDN in front of PHP returned an HTML error page for one chunk, the uploader tried to parse it as JSON and gave up. Responses are now read as text first; gateway and timeout errors (502/503/504, Cloudflare 52x, 429) retry the same chunk up to three times with backoff, and the final error names the HTTP status and which part failed.
+- Retried chunks can no longer be written twice. Each chunk sends its byte offset; if an earlier attempt already reached the server, the partial file is truncated back to that offset before appending.
+- The final chunk (sideload plus author/count scan) now raises the PHP time limit to 300 seconds.
+- Dashboard CSS/JS were still enqueued as version 2.1.5, so browsers could keep a cached copy after updating. They are now enqueued as 2.1.7.
+
 ## [2.1.6] - 2026-08-17
 
 ### Changed

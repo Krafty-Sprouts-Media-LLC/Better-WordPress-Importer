@@ -82,14 +82,50 @@
 	}
 
 	function uploadFile( file ) {
-		var chunkSize = cfg.chunkSize || ( 8 * 1024 * 1024 );
-		var totalChunks = Math.max( 1, Math.ceil( file.size / chunkSize ) );
+		// Many hosts sit behind a proxy that kills any request after ~60s, so
+		// on a slow uplink one big chunk can never finish. Chunks start small
+		// and halve after each timeout-type failure; `offset` (bytes already
+		// stored) rather than index * size tracks progress so sizes can change.
+		var minChunkSize = 256 * 1024;
+		var chunkSize = cfg.chunkSize || ( 2 * 1024 * 1024 );
+		var offset = 0;
 		var index = 0;
+		var attempt = 0;
+		var maxAttempts = 6;
+
+		function remainingChunks() {
+			return Math.max( 1, Math.ceil( ( file.size - offset ) / chunkSize ) );
+		}
+
+		// Proxies and CDNs in front of PHP (nginx, Cloudflare) answer with an
+		// HTML error page, not JSON, so read the body as text and only parse
+		// it once we know it is ours. Gateway errors are often transient and
+		// worth retrying; the server uses `offset` to avoid double-writes.
+		function readResponse( r ) {
+			return r.text().then( function ( text ) {
+				var res = null;
+				try { res = JSON.parse( text ); } catch ( e ) {}
+
+				if ( res && typeof res === 'object' ) {
+					if ( ! res.success ) {
+						var err = new Error( ( res.data && res.data.message ) || 'Upload failed' );
+						err.retryable = false;
+						throw err;
+					}
+					return res;
+				}
+
+				var httpErr = new Error( 'The server returned ' + r.status + ' ' + ( r.statusText || '' ).trim() + ' instead of a valid response.' );
+				httpErr.retryable = [ 408, 429, 500, 502, 503, 504, 520, 522, 524 ].indexOf( r.status ) !== -1;
+				throw httpErr;
+			} );
+		}
 
 		function uploadNext() {
-			var start = index * chunkSize;
+			var start = offset;
 			var end = Math.min( file.size, start + chunkSize );
 			var blob = file.slice( start, end );
+			var totalChunks = index + remainingChunks();
 
 			var body = new FormData();
 			body.append( 'action', 'wxr-import-upload-chunk' );
@@ -97,24 +133,25 @@
 			body.append( 'token', state.token );
 			body.append( 'chunk_index', index );
 			body.append( 'total_chunks', totalChunks );
+			body.append( 'offset', start );
 			body.append( 'filename', file.name );
 			body.append( 'chunk', blob, file.name );
 
 			$( 'wxrimp-file-meta' ).textContent =
-				formatBytes( file.size ) + ' · ' + cfg.strings.uploading + ' (' + ( index + 1 ) + '/' + totalChunks + ')';
+				formatBytes( file.size ) + ' · ' + cfg.strings.uploading + ' ' + Math.floor( ( start / file.size ) * 100 ) + '%';
 
 			fetch( cfg.ajaxUrl, { method: 'POST', credentials: 'same-origin', body: body } )
-				.then( function ( r ) { return r.json(); } )
+				.then( readResponse )
 				.then( function ( res ) {
-					if ( ! res.success ) {
-						throw new Error( ( res.data && res.data.message ) || 'Upload failed' );
-					}
-
-					var pct = Math.round( ( ( index + 1 ) / totalChunks ) * 100 );
-					$( 'wxrimp-upload-fill' ).style.width = pct + '%';
-
+					attempt = 0;
+					offset = end;
 					index++;
-					if ( index < totalChunks ) {
+
+					var pct = Math.round( ( offset / file.size ) * 100 );
+					$( 'wxrimp-upload-fill' ).style.width = pct + '%';
+					$( 'wxrimp-chunk-note' ).textContent = '';
+
+					if ( offset < file.size ) {
 						uploadNext();
 						return;
 					}
@@ -122,7 +159,20 @@
 					onUploadComplete( res.data );
 				} )
 				.catch( function ( err ) {
-					$( 'wxrimp-chunk-note' ).textContent = cfg.strings.uploadFailed + ' ' + err.message;
+					// A fetch() TypeError means the request never got a response.
+					var retryable = err.retryable !== false;
+					attempt++;
+
+					if ( retryable && attempt < maxAttempts ) {
+						// Likely a proxy timeout: send less per request next time.
+						chunkSize = Math.max( minChunkSize, Math.floor( chunkSize / 2 ) );
+						var delay = Math.min( 16000, 2000 * Math.pow( 2, attempt - 1 ) );
+						$( 'wxrimp-chunk-note' ).textContent = err.message + ' Retrying with ' + formatBytes( Math.min( chunkSize, file.size - start ) ) + ' parts in ' + ( delay / 1000 ) + 's…';
+						setTimeout( uploadNext, delay );
+						return;
+					}
+
+					$( 'wxrimp-chunk-note' ).textContent = cfg.strings.uploadFailed + ' ' + err.message + ' (part ' + ( index + 1 ) + ' of ' + totalChunks + ', at ' + formatBytes( start ) + ')';
 				} );
 		}
 

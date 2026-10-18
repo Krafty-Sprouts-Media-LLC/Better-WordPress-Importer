@@ -66,6 +66,15 @@ class WXR_Importer extends WP_Importer {
 	protected $prefetched_files = array();
 
 	/**
+	 * Attachment URLs still to prefetch, in file order, keyed URL => position.
+	 * Downloaded a batch at a time as the import reaches them.
+	 *
+	 * @since 2.1.9
+	 * @var int[]
+	 */
+	protected $prefetch_pending = array();
+
+	/**
 	 * Logger instance.
 	 *
 	 * @var WP_Importer_Logger
@@ -345,22 +354,23 @@ class WXR_Importer extends WP_Importer {
 			return $result;
 		}
 
-		// If we're fetching attachments, download them all concurrently
-		// up front rather than one at a time as each post is encountered.
-		// This only front-loads network I/O — it doesn't change import
-		// order, deduplication, or any other behavior of the main loop
-		// below, which is unmodified. A prefetch failure for a given URL
-		// just means that attachment falls back to the normal synchronous
-		// fetch later; it's never fatal to the import.
+		// If we're fetching attachments, download them concurrently in
+		// batches just ahead of the main loop, rather than one at a time as
+		// each post is encountered. Batching (instead of fetching every file
+		// before the first post) keeps the import visibly moving and keeps
+		// temp-disk use to one batch. It only front-loads network I/O — it
+		// doesn't change import order, deduplication, or any other behavior
+		// of the main loop. A prefetch failure for a given URL just means
+		// that attachment falls back to the normal synchronous fetch later.
 		if ( $this->options['fetch_attachments'] && apply_filters( 'wxr_importer.prefetch_attachments', true ) ) {
 			$urls = $this->find_attachment_urls_for_prefetch( $file );
 			if ( ! empty( $urls ) ) {
+				$this->prefetch_pending = array_flip( $urls );
 				$this->logger->info( sprintf(
 					/* translators: %d: number of attachment files */
-					__( 'Prefetching %d attachment(s)…', 'wordpress-importer' ),
+					__( 'Found %d attachment file(s); they will be downloaded in batches as the import reaches them.', 'wordpress-importer' ),
 					count( $urls )
 				) );
-				$this->prefetch_remote_files( $urls );
 			}
 		}
 
@@ -512,7 +522,7 @@ class WXR_Importer extends WP_Importer {
 		if ( $this->options['aggressive_url_search'] ) {
 			$this->replace_attachment_urls_in_content();
 		}
-		// $this->remap_featured_images();
+		$this->remap_featured_images();
 
 		$this->import_end();
 
@@ -596,6 +606,14 @@ class WXR_Importer extends WP_Importer {
 	 * Performs post-import cleanup of files and the cache
 	 */
 	protected function import_end(): void {
+		// Remove prefetched files that were never used (e.g. their
+		// attachment already existed and was skipped).
+		foreach ( $this->prefetched_files as $tmp_file ) {
+			@unlink( $tmp_file );
+		}
+		$this->prefetched_files = array();
+		$this->prefetch_pending = array();
+
 		// Re-enable stuff in core
 		wp_suspend_cache_invalidation( false );
 		wp_cache_flush();
@@ -844,6 +862,19 @@ class WXR_Importer extends WP_Importer {
 			}
 			$this->assign_post_terms( (int) $post_exists, $terms, $data );
 			$this->process_comments( $comments, $original_id, $data, $post_exists );
+
+			// Finish links an earlier run left unresolved, so re-running an
+			// interrupted import repairs it: a parent that wasn't imported yet
+			// when this post was created, and a featured image still pointing
+			// at the original site's attachment ID.
+			if ( get_post_meta( (int) $post_exists, '_wxr_import_parent', true ) ) {
+				$this->requires_remapping['post'][ (int) $post_exists ] = true;
+			}
+			foreach ( $meta as $meta_item ) {
+				if ( '_thumbnail_id' === $meta_item['key'] ) {
+					$this->featured_images[ (int) $post_exists ] = (int) $meta_item['value'];
+				}
+			}
 
 			return false;
 		}
@@ -1909,6 +1940,48 @@ class WXR_Importer extends WP_Importer {
 	}
 
 	/**
+	 * Prefetch the next batch of attachment files, starting at $url.
+	 *
+	 * Attachment URLs are collected in file order, which is the order the
+	 * main loop reaches them, so the batch starting at the current URL is
+	 * the one about to be needed. URLs before it that were never reached
+	 * (skipped items) drop out of the queue and are fetched synchronously
+	 * if they are ever needed.
+	 *
+	 * @since 2.1.9
+	 *
+	 * @param string $url First URL of the batch.
+	 */
+	protected function prefetch_batch_from( string $url ): void {
+		$batch_size = max( 1, (int) apply_filters( 'wxr_importer.prefetch_batch_size', 100 ) );
+		$position = $this->prefetch_pending[ $url ];
+
+		$batch = array();
+		foreach ( $this->prefetch_pending as $pending_url => $pending_position ) {
+			if ( $pending_position < $position ) {
+				unset( $this->prefetch_pending[ $pending_url ] );
+				continue;
+			}
+
+			$batch[] = $pending_url;
+			unset( $this->prefetch_pending[ $pending_url ] );
+
+			if ( count( $batch ) >= $batch_size ) {
+				break;
+			}
+		}
+
+		$this->logger->info( sprintf(
+			/* translators: 1: files in this batch, 2: files left after it */
+			__( 'Downloading the next %1$d attachment file(s) (%2$d more after this)…', 'wordpress-importer' ),
+			count( $batch ),
+			count( $this->prefetch_pending )
+		) );
+
+		$this->prefetch_remote_files( $batch );
+	}
+
+	/**
 	 * Download a batch of remote files concurrently via curl_multi, ahead
 	 * of the main import loop reaching them one at a time.
 	 *
@@ -1925,6 +1998,14 @@ class WXR_Importer extends WP_Importer {
 		if ( ! function_exists( 'curl_multi_init' ) ) {
 			return;
 		}
+
+		// Long downloads produce no other output, so report progress on a
+		// timer. Besides informing the user, this keeps the event stream
+		// from looking idle to the web server (which drops a silent
+		// connection) and lets the caller refresh its run lock.
+		$total = count( $urls );
+		$done = 0;
+		$last_report = time();
 
 		$concurrency = max( 1, (int) apply_filters( 'wxr_importer.prefetch_concurrency', 4 ) );
 		$queue = $urls;
@@ -1986,6 +2067,27 @@ class WXR_Importer extends WP_Importer {
 
 				$start_next();
 				$running = 1; // There may be more queued work even if curl briefly reports none active.
+				$done++;
+			}
+
+			if ( time() - $last_report >= 15 ) {
+				$last_report = time();
+				$this->logger->info( sprintf(
+					/* translators: 1: files downloaded so far, 2: files in this batch */
+					__( 'Downloading attachment files: %1$d of %2$d in this batch…', 'wordpress-importer' ),
+					$done,
+					$total
+				) );
+
+				/**
+				 * Fires periodically while attachment files are being prefetched.
+				 *
+				 * @since 2.1.9
+				 *
+				 * @param int $done  Files finished so far in this batch.
+				 * @param int $total Files in this batch.
+				 */
+				do_action( 'wxr_importer.prefetch_progress', $done, $total );
 			}
 		} while ( $running > 0 || ! empty( $queue ) || ! empty( $active ) );
 
@@ -2007,6 +2109,10 @@ class WXR_Importer extends WP_Importer {
 		$upload = wp_upload_bits( $file_name, 0, '', $post['upload_date'] );
 		if ( $upload['error'] ) {
 			return new WP_Error( 'upload_dir_error', $upload['error'] );
+		}
+
+		if ( ! isset( $this->prefetched_files[ $url ] ) && isset( $this->prefetch_pending[ $url ] ) ) {
+			$this->prefetch_batch_from( $url );
 		}
 
 		if ( isset( $this->prefetched_files[ $url ] ) ) {
@@ -2321,18 +2427,25 @@ class WXR_Importer extends WP_Importer {
 	}
 
 	/**
-	 * Update _thumbnail_id meta to new, imported attachment IDs
+	 * Update _thumbnail_id meta to new, imported attachment IDs.
+	 *
+	 * `_thumbnail_id` is copied verbatim from the export, so it holds the
+	 * attachment's ID on the original site. Map it through the post ID
+	 * mapping (which includes attachments) once everything is imported.
 	 */
 	function remap_featured_images(): void {
-		// cycle through posts that have a featured image
-		foreach ( $this->featured_images as $post_id => $value ) {
-			if ( isset( $this->processed_posts[ $value ] ) ) {
-				$new_id = $this->processed_posts[ $value ];
+		foreach ( $this->featured_images as $post_id => $old_id ) {
+			if ( ! isset( $this->mapping['post'][ $old_id ] ) ) {
+				continue;
+			}
 
-				// only update if there's a difference
-				if ( $new_id !== $value ) {
-					update_post_meta( $post_id, '_thumbnail_id', $new_id );
-				}
+			$new_id = (int) $this->mapping['post'][ $old_id ];
+
+			// Only touch values that still hold the original site's ID, so a
+			// featured image changed by hand since an earlier run is kept.
+			$current = (int) get_post_meta( $post_id, '_thumbnail_id', true );
+			if ( $current === $old_id && $new_id !== $old_id ) {
+				update_post_meta( $post_id, '_thumbnail_id', $new_id );
 			}
 		}
 	}
