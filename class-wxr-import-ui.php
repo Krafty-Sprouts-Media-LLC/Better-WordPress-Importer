@@ -426,6 +426,11 @@ class WXR_Import_UI {
 		wp_ob_end_flush_all();
 		flush();
 
+		// Each run counts from zero. A browser reconnected to a fresh run
+		// (e.g. after an earlier one died) would otherwise add this run's
+		// counts, including "already imported" items, on top of the last.
+		$this->emit_sse_message( array( 'action' => 'reset' ) );
+
 		$mapping = $settings['mapping'];
 		$this->fetch_attachments = (bool) $settings['fetch_attachments'];
 

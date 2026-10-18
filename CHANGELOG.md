@@ -2,6 +2,13 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.11] - 2026-10-18
+
+### Fixed
+- Posts lost their categories and tags on sites with a persistent object cache (e.g. Redis on DokployPress), logging “Failed to import post_tag … A term with the name provided already exists”. Core's `term_exists()` reads through the term query cache, which stays stale while an import suspends cache invalidation, so existing terms looked missing and re-creating them failed. Existing terms are now looked up directly in the database. If WordPress still reports a same-name term (a different slug), its ID is used instead of failing.
+- Long imports could die partway (seen right after ~6,500 media items, at memory_limit 384M). WordPress keeps everything it loads in the request's object cache for the whole run. The importer now clears that in-request cache every 50 items and logs memory use every 500 items to the debug log.
+- Progress counters could exceed their totals (e.g. Media 6546 / 6460) after the browser reconnected to a new run, because the new run's counts were added to the old ones. Each run now tells the page to reset its counters.
+
 ## [2.1.10] - 2026-10-18
 
 ### Fixed

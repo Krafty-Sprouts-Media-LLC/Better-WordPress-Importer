@@ -429,6 +429,8 @@ class WXR_Importer extends WP_Importer {
 					}
 
 					$this->process_post( $parsed['data'], $parsed['meta'], $parsed['comments'], $parsed['terms'] );
+					unset( $node, $parsed );
+					$this->maybe_free_memory();
 
 					// Handled everything in this node, move on to the next
 					$reader->next();
@@ -1860,6 +1862,19 @@ class WXR_Importer extends WP_Importer {
 		}
 
 		$result = wp_insert_term( $data['name'], $data['taxonomy'], $termdata );
+
+		// A term with the same name (but a different slug) already exists:
+		// WordPress hands back its ID, so use it rather than failing — the
+		// post still gets its category or tag.
+		if ( is_wp_error( $result ) && 'term_exists' === $result->get_error_code() && $result->get_error_data( 'term_exists' ) ) {
+			$existing = (int) $result->get_error_data( 'term_exists' );
+			$this->mapping['term'][ $mapping_key ] = $existing;
+			$this->mapping['term_id'][ $original_id ] = $existing;
+			$this->mark_term_exists( $data, $existing );
+			do_action( 'wxr_importer.process_already_imported.term', $data );
+			return false;
+		}
+
 		if ( is_wp_error( $result ) ) {
 			$this->logger->warning( sprintf(
 				__( 'Failed to import %s %s', 'wordpress-importer' ),
@@ -1937,6 +1952,56 @@ class WXR_Importer extends WP_Importer {
 		}
 
 		return array_keys( $urls );
+	}
+
+	/**
+	 * Items processed so far in this run, for periodic memory housekeeping.
+	 *
+	 * @since 2.1.11
+	 * @var int
+	 */
+	protected $items_processed = 0;
+
+	/**
+	 * Every 50 items, drop WordPress's in-request object cache.
+	 *
+	 * Everything WordPress loads (posts, meta, attachment metadata, terms)
+	 * is kept in the request's object cache for the whole run. With a
+	 * persistent object cache that local copy is never trimmed, so a long
+	 * import grows until it hits memory_limit and PHP dies mid-run. The
+	 * data is still in the database (and the persistent cache), so
+	 * dropping the local copy only costs a re-read.
+	 *
+	 * @since 2.1.11
+	 */
+	protected function maybe_free_memory(): void {
+		$this->items_processed++;
+		if ( 0 !== $this->items_processed % 50 ) {
+			return;
+		}
+
+		if ( function_exists( 'wp_cache_flush_runtime' ) && function_exists( 'wp_cache_supports' ) && wp_cache_supports( 'flush_runtime' ) ) {
+			wp_cache_flush_runtime();
+		} else {
+			global $wp_object_cache;
+			if ( isset( $wp_object_cache->cache ) && is_array( $wp_object_cache->cache ) ) {
+				$wp_object_cache->cache = array();
+			}
+		}
+
+		global $wpdb;
+		$wpdb->queries = array();
+		gc_collect_cycles();
+
+		if ( 0 === $this->items_processed % 500 ) {
+			$this->logger->debug( sprintf(
+				'Processed %d items; memory %s (peak %s, limit %s)',
+				$this->items_processed,
+				size_format( memory_get_usage( true ) ),
+				size_format( memory_get_peak_usage( true ) ),
+				ini_get( 'memory_limit' )
+			) );
+		}
 	}
 
 	/**
@@ -2642,11 +2707,20 @@ class WXR_Importer extends WP_Importer {
 			return $this->exists['term'][ $exists_key ];
 		}
 
-		// Still nothing, try comment_exists, and cache it
-		$exists = term_exists( $data['slug'], $data['taxonomy'] );
-		if ( is_array( $exists ) ) {
-			$exists = $exists['term_id'];
-		}
+		// Still nothing: ask the database directly, and cache it. Core's
+		// term_exists() goes through get_terms()' query cache, which the
+		// import keeps stale (wp_suspend_cache_invalidation()); with a
+		// persistent object cache (e.g. Redis) it then reports existing
+		// terms as missing, and creating them fails as duplicates.
+		global $wpdb;
+		$exists = $wpdb->get_var( $wpdb->prepare(
+			"SELECT t.term_id FROM {$wpdb->terms} AS t
+			INNER JOIN {$wpdb->term_taxonomy} AS tt ON t.term_id = tt.term_id
+			WHERE t.slug = %s AND tt.taxonomy = %s LIMIT 1",
+			sanitize_title( $data['slug'] ),
+			$data['taxonomy']
+		) );
+		$exists = $exists ? (int) $exists : false;
 
 		$this->exists['term'][ $exists_key ] = $exists;
 

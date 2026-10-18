@@ -443,7 +443,12 @@
 			consecutiveErrors = 0;
 
 			var data = JSON.parse( message.data );
-			if ( data.action === 'updateDelta' ) {
+			if ( data.action === 'reset' ) {
+				complete = {};
+				Object.keys( state.counts ).forEach( function ( type ) {
+					updateDelta( type, 0 );
+				} );
+			} else if ( data.action === 'updateDelta' ) {
 				updateDelta( data.type, data.delta );
 			} else if ( data.action === 'complete' ) {
 				evtSource.close();
