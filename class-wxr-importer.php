@@ -969,11 +969,12 @@ class WXR_Importer extends WP_Importer {
 
 		if ( is_wp_error( $post_id ) ) {
 			$this->logger->error( sprintf(
-				__( 'Failed to import "%s" (%s)', 'wordpress-importer' ),
+				/* translators: 1: item title, 2: post type label, 3: reason */
+				__( 'Failed to import "%1$s" (%2$s): %3$s', 'wordpress-importer' ),
 				$data['post_title'],
-				$post_type_object->labels->singular_name
+				$post_type_object->labels->singular_name,
+				$post_id->get_error_message()
 			) );
-			$this->logger->debug( $post_id->get_error_message() );
 
 			/**
 			 * Post processing failed.
@@ -1014,7 +1015,16 @@ class WXR_Importer extends WP_Importer {
 		// Handle the terms too
 		$this->assign_post_terms( $post_id, $terms, $data );
 
+		// Stage markers in the debug log, so a run that dies mid-post shows
+		// which step it was on.
+		if ( ! empty( $comments ) ) {
+			$this->logger->debug( sprintf( 'Post %d: importing %d comment(s)', $post_id, count( $comments ) ) );
+		}
 		$this->process_comments( $comments, $post_id, $data );
+
+		if ( ! empty( $meta ) ) {
+			$this->logger->debug( sprintf( 'Post %d: importing %d meta field(s)', $post_id, count( $meta ) ) );
+		}
 		$this->process_post_meta( $meta, $post_id, $data );
 
 		if ( 'nav_menu_item' === $data['post_type'] ) {
@@ -1317,11 +1327,11 @@ class WXR_Importer extends WP_Importer {
 
 			if ( $key ) {
 				// export gets meta straight from the DB so could have a serialized string
-				if ( ! $value ) {
-					$value = maybe_unserialize( $meta_item['value'] );
+				if ( false === $value ) {
+					$value = $this->add_imported_meta( 'post', $post_id, $key, $meta_item['value'] );
+				} else {
+					$this->add_imported_meta( 'post', $post_id, $key, $value );
 				}
-
-				add_post_meta( $post_id, $key, $value );
 				do_action( 'import_post_meta', $post_id, $key, $value );
 
 				// if the post has a featured image, take note of this in case of remap
@@ -1522,8 +1532,7 @@ class WXR_Importer extends WP_Importer {
 
 			// Process the meta items
 			foreach ( $meta as $meta_item ) {
-				$value = maybe_unserialize( $meta_item['value'] );
-				add_comment_meta( $comment_id, wp_slash( $meta_item['key'] ), wp_slash( $value ) );
+				$this->add_imported_meta( 'comment', $comment_id, $meta_item['key'], $meta_item['value'] );
 			}
 
 			/**
@@ -1952,6 +1961,58 @@ class WXR_Importer extends WP_Importer {
 		}
 
 		return array_keys( $urls );
+	}
+
+	/**
+	 * Store one imported meta value, without letting a bad value end the run.
+	 *
+	 * Exports carry meta exactly as the source database stored it, often
+	 * serialized. A serialized object whose class isn't loaded here (e.g.
+	 * a plugin's model class) unserializes to __PHP_Incomplete_Class, and
+	 * add_metadata()'s wp_unslash() then throws a fatal Error on PHP 8 —
+	 * which killed imports at the first post carrying such meta. Values
+	 * containing objects are therefore stored verbatim, never unserialized
+	 * (which also avoids instantiating classes named by the import file).
+	 * Everything else goes through the normal API, slashed as it expects.
+	 *
+	 * @since 2.1.12
+	 *
+	 * @param string $type      'post' or 'comment'.
+	 * @param int    $object_id Object the meta belongs to.
+	 * @param string $key       Meta key.
+	 * @param mixed  $raw       Value from the export (or already prepared).
+	 * @return mixed The value as stored (raw string for verbatim values).
+	 */
+	protected function add_imported_meta( string $type, int $object_id, string $key, $raw ) {
+		try {
+			if ( is_string( $raw ) && is_serialized( $raw ) && preg_match( '/(?:^|[;{])[OC]:\d+:"/', $raw ) ) {
+				global $wpdb;
+				$table  = _get_meta_table( $type );
+				$column = sanitize_key( $type . '_id' );
+				$wpdb->insert( $table, array(
+					$column      => $object_id,
+					'meta_key'   => $key,
+					'meta_value' => $raw,
+				) );
+				wp_cache_delete( $object_id, $type . '_meta' );
+				return $raw;
+			}
+
+			$value = is_string( $raw ) ? maybe_unserialize( $raw ) : $raw;
+			$slashed = function_exists( 'wp_slash_strings_only' ) ? wp_slash_strings_only( $value ) : ( is_string( $value ) ? wp_slash( $value ) : $value );
+			add_metadata( $type, $object_id, wp_slash( $key ), $slashed );
+			return $value;
+		} catch ( \Throwable $e ) {
+			$this->logger->warning( sprintf(
+				/* translators: 1: meta key, 2: object type, 3: object ID, 4: error */
+				__( 'Skipped meta "%1$s" on %2$s %3$d: %4$s', 'wordpress-importer' ),
+				$key,
+				$type,
+				$object_id,
+				$e->getMessage()
+			) );
+			return false;
+		}
 	}
 
 	/**
@@ -2601,9 +2662,24 @@ class WXR_Importer extends WP_Importer {
 			return $this->exists['post'][ $exists_key ];
 		}
 
-		// Still nothing, try post_exists, and cache it
-		$exists = post_exists( $data['post_title'], $data['post_content'], $data['post_date'] );
-		$this->exists['post'][ $exists_key ] = $exists;
+		// Still nothing: match on GUID first — the same key the prefill
+		// uses, and the one an earlier import of this file stored (GUIDs
+		// are kept unless update_attachment_guids is on). Title + content +
+		// date alone misses attachments, so re-running an import created
+		// every media item again.
+		$exists = false;
+		if ( ! empty( $data['guid'] ) ) {
+			global $wpdb;
+			$exists = (int) $wpdb->get_var( $wpdb->prepare(
+				"SELECT ID FROM {$wpdb->posts} WHERE guid = %s AND post_type = %s ORDER BY ID ASC LIMIT 1",
+				$data['guid'],
+				$data['post_type']
+			) );
+		}
+		if ( ! $exists ) {
+			$exists = post_exists( $data['post_title'], $data['post_content'], $data['post_date'] );
+		}
+		$this->exists['post'][ $exists_key ] = $exists ? (int) $exists : false;
 
 		return $exists;
 	}

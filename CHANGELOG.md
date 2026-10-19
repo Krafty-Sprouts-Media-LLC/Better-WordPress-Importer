@@ -2,6 +2,21 @@
 
 All notable changes to this fork of the WordPress Importer v2 plugin are documented here.
 
+## [2.1.13] - 2026-10-19
+
+### Fixed
+- Imports died at the first post carrying plugin meta that stores serialized objects (e.g. Link Whisper's `Wpil_Model_Link`), then showed “already running” for five minutes and restarted into the same crash. The class isn't loaded on the new site, so the value unserialized to `__PHP_Incomplete_Class`, and `add_metadata()`'s `wp_unslash()` throws a fatal `Error` on PHP 8 when touching it. Meta values containing serialized objects are now stored verbatim (never unserialized, which also avoids instantiating classes named in the import file). Other values are slashed as `add_metadata()` expects (backslashes in meta were previously stripped). A meta write that still fails is logged as a warning and skipped instead of ending the run. Applies to post and comment meta.
+
+### Added
+- If the import process dies, the PHP fatal error (or a note that it was killed) and peak memory are written to `wxr-importer-debug.log` and shown on the import screen, and the run lock is released at once.
+- Debug-log markers before each post's comments and meta, so a stalled run shows which step it was on.
+
+## [2.1.12] - 2026-10-19
+
+### Fixed
+- Re-running an import of a large file created every media item again (and re-downloaded every file). For files over the prefill threshold the importer checks for existing items one at a time, and that check compared title + content + date, which doesn't match attachments, instead of the GUID the prefill uses. It now matches on GUID first (same post type), and falls back to the old check.
+- Failed items now say why in the import log (e.g. `Failed to import "Chili pepper" (Media): Remote server returned 404 Not Found for …`) instead of only in the debug log.
+
 ## [2.1.11] - 2026-10-18
 
 ### Fixed

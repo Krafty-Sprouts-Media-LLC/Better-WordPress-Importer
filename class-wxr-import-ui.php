@@ -477,8 +477,35 @@ class WXR_Import_UI {
 		// Flush once more.
 		flush();
 
+		// If PHP dies mid-import (fatal error, memory exhausted), record why
+		// in the debug log and on the page, and free the run lock at once.
+		// Otherwise the only symptom is a stalled screen and five minutes of
+		// "already running" until the lock goes stale.
+		$finished = false;
+		register_shutdown_function( function () use ( &$finished ) {
+			if ( $finished ) {
+				return;
+			}
+
+			$error = error_get_last();
+			$fatal = $error && in_array( $error['type'], array( E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR ), true );
+			$message = $fatal
+				? sprintf( 'PHP fatal error: %s in %s on line %d', $error['message'], $error['file'], $error['line'] )
+				: 'The import process stopped unexpectedly without a PHP error (it may have been killed by the server).';
+			$message .= sprintf( ' Memory peak %s of %s.', size_format( memory_get_peak_usage( true ) ), ini_get( 'memory_limit' ) );
+
+			( new WP_Importer_Logger_File() )->error( $message );
+
+			echo "event: log\n";
+			echo 'data: ' . wp_json_encode( array( 'level' => 'error', 'message' => $message ) ) . "\n\n";
+			flush();
+
+			$this->release_import_lock();
+		} );
+
 		$file = get_attached_file( $this->id );
 		$err = $importer->import( $file );
+		$finished = true;
 
 		// Remove the settings to stop future reconnects, and release the
 		// run lock now that this pass has finished.
